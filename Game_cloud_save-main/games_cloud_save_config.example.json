@@ -1,0 +1,21 @@
+{
+  "token": "",
+  "repo": "yourname/your-repo",
+  "branch": "main",
+  "device_name": "MyDevice",
+  "games": [
+    {
+      "id": "game_1",
+      "name": "Game1",
+      "game_root_path": "D:/Your/Game/SaveFolder",
+      "save_path": "D:/Your/Game/SaveFolder",
+      "remote_zip_path": "save_sync/Game1/save_backup_latest.zip",
+      "download_mode": "overwrite",
+      "backup_before_overwrite": true,
+      "pending_restore": null,
+      "detect_type": "manual",
+      "last_uploaded_at": ""
+    }
+  ],
+  "current_game_id": "game_1"
+}
