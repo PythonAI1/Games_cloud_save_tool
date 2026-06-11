@@ -1,0 +1,12 @@
+__pycache__/
+*.pyc
+pending_local_save_backup/
+games_cloud_save_config.json
+build/
+dist/
+installer/
+release/
+CHANGELOG.md
+*.spec
+!GameCloudSave.spec
+.DS_Store

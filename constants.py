@@ -1,0 +1,7 @@
+DEFAULT_REMOTE_ZIP_PATH = ""
+REMOTE_ZIP_FILENAME = "save_backup_latest.zip"
+API_VERSION = "2022-11-28"
+CONFIG_FILE_NAME = "games_cloud_save_config.json"
+PENDING_BACKUP_DIR_NAME = "pending_local_save_backup"
+DEFAULT_GAME_ID = "game_1"
+APP_DATA_DIR_NAME = "GamesCloudSave"
