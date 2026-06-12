@@ -452,9 +452,6 @@ class DownloadPromptDialog(QDialog):
             format_local_info_text(game),
             remote_text,
             "",
-            f"本地存档目录：{game.get('save_path', '') or '未设置'}",
-            f"云端 zip 路径：{game.get('remote_zip_path', '') or '未设置'}",
-            "",
             action_text,
         ]
         self.info_label.setText("\n".join(lines))
@@ -493,9 +490,6 @@ class UploadPromptDialog(QDialog):
 
         lines = [
             format_local_info_text(game),
-            "",
-            f"本地存档目录：{game.get('save_path', '') or '未设置'}",
-            f"云端 zip 路径：{game.get('remote_zip_path', '') or '未设置'}",
             "",
             "目标窗口已关闭。",
             "现在是否上传这个游戏对应的云存档？",
