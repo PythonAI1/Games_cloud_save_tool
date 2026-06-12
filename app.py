@@ -215,9 +215,9 @@ class GamesCloudSaveApp(QMainWindow):
         action_row.setSpacing(12)
         self.refresh_all_button = QPushButton("刷新本地和云端信息")
         self.refresh_all_button.clicked.connect(self.refresh_all_info)
-        self.upload_button = QPushButton("更新云存档")
+        self.upload_button = QPushButton("上传本地存档")
         self.upload_button.clicked.connect(self.start_upload)
-        self.download_button = QPushButton("从 GitHub 下载")
+        self.download_button = QPushButton("下载云端存档")
         self.download_button.clicked.connect(self.start_download)
         action_row.addWidget(self.refresh_all_button)
         action_row.addWidget(self.upload_button)
@@ -483,21 +483,21 @@ class GamesCloudSaveApp(QMainWindow):
                 background: #e8eef4;
                 border-color: #d3dde7;
             }
-            QPushButton[text="更新云存档"] {
+            QPushButton[text="上传本地存档"] {
                 background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #087f69, stop:1 #16a085);
                 color: #ffffff;
                 border-color: #087f69;
             }
-            QPushButton[text="更新云存档"]:hover {
+            QPushButton[text="上传本地存档"]:hover {
                 background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #066d5b, stop:1 #11967d);
                 border-color: #055f50;
             }
-            QPushButton[text="从 GitHub 下载"] {
+            QPushButton[text="下载云端存档"] {
                 background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #1769aa, stop:1 #268ee2);
                 color: #ffffff;
                 border-color: #1769aa;
             }
-            QPushButton[text="从 GitHub 下载"]:hover {
+            QPushButton[text="下载云端存档"]:hover {
                 background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #125b94, stop:1 #197dca);
                 border-color: #104f81;
             }
