@@ -489,8 +489,6 @@ class UploadPromptDialog(QDialog):
         layout.addWidget(game_name_label)
 
         lines = [
-            format_local_info_text(game),
-            "",
             "目标窗口已关闭。",
             "现在是否上传这个游戏对应的云存档？",
         ]
