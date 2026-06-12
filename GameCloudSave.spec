@@ -5,7 +5,7 @@ a = Analysis(
     ['main.py'],
     pathex=[],
     binaries=[],
-    datas=[('game_cloud_save_launcher.pyw', '.'), ('assets/game_cloud_save.ico', 'assets')],
+    datas=[('game_cloud_save_launcher.pyw', '.'), ('assets/game_cloud_save.ico', 'assets'), ('assets/combo_down_arrow.png', 'assets')],
     hiddenimports=[],
     hookspath=[],
     hooksconfig={},

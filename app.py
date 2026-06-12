@@ -193,14 +193,14 @@ class GamesCloudSaveApp(QMainWindow):
 
         self.overview_tab = QWidget()
         self.settings_tab = QWidget()
-        self.logs_tab = QWidget()
+        self.launcher_tab = QWidget()
         self.notebook.addTab(self.overview_tab, "概览")
         self.notebook.addTab(self.settings_tab, "设置")
-        self.notebook.addTab(self.logs_tab, "日志")
+        self.notebook.addTab(self.launcher_tab, "快捷存档游戏启动器")
 
         self._build_overview_tab()
         self._build_settings_tab(token, repo, branch, emulator_path, game_root, save_path, remote_zip_path)
-        self._build_logs_tab()
+        self._build_launcher_tab()
         self._populate_game_selector(games, current_game_id)
         self._refresh_target_window_label()
 
@@ -313,18 +313,9 @@ class GamesCloudSaveApp(QMainWindow):
         self._add_labeled_entry(grid, 1, "GitHub Token", self.token_edit)
         self._add_labeled_entry(grid, 2, "仓库名", self.repo_edit, hint="格式：用户名/仓库名")
         self._add_labeled_entry(grid, 3, "分支", self.branch_edit, hint="通常填 main")
-        self._add_labeled_entry(grid, 4, "模拟器/游戏路径", self.emulator_path_edit, browse_callback=self.pick_emulator)
         self._add_labeled_entry(
             grid,
-            5,
-            "目标窗口",
-            self.target_window_label,
-            hint="点击后在 5 秒内使用 Alt+Tab 切换到目标游戏或程序窗口",
-            extra_button=self.capture_window_button,
-        )
-        self._add_labeled_entry(
-            grid,
-            6,
+            4,
             "存档所在目录",
             self.game_root_edit,
             browse_callback=self.pick_directory,
@@ -332,22 +323,19 @@ class GamesCloudSaveApp(QMainWindow):
         )
         self._add_labeled_entry(
             grid,
-            7,
+            5,
             "云端存档目录名",
             self.remote_zip_path_edit,
             hint="填写目录名称，例如 games-botw-save；将自动生成 save_backup_latest.zip",
         )
-        grid.addWidget(self.config_path_label, 8, 0, 1, 2)
-        grid.addWidget(self.view_config_button, 8, 2)
+        grid.addWidget(self.config_path_label, 6, 0, 1, 2)
+        grid.addWidget(self.view_config_button, 6, 2)
         self._refresh_open_save_folder_button_state()
 
         action_row = QHBoxLayout()
         self.save_settings_button = QPushButton("保存设置")
         self.save_settings_button.clicked.connect(self.save_settings_and_notify)
-        self.create_launcher_shortcut_button = QPushButton("创建此游戏云存档启动器至桌面")
-        self.create_launcher_shortcut_button.clicked.connect(self.create_current_game_launcher_shortcut)
         action_row.addWidget(self.save_settings_button)
-        action_row.addWidget(self.create_launcher_shortcut_button)
         outer.addLayout(action_row)
         outer.addStretch(1)
 
@@ -389,35 +377,52 @@ class GamesCloudSaveApp(QMainWindow):
         holder.setLayout(right)
         layout.addWidget(holder, row, 2)
 
-    def _build_logs_tab(self) -> None:
-        layout = QVBoxLayout(self.logs_tab)
+    def _build_launcher_tab(self) -> None:
+        layout = QVBoxLayout(self.launcher_tab)
         layout.setContentsMargins(8, 8, 8, 8)
         layout.setSpacing(14)
 
-        top_card = self._card()
-        top_layout = QHBoxLayout(top_card)
-        top_layout.setContentsMargins(18, 14, 18, 14)
-        text = QLabel("可查看详细运行日志")
-        text.setWordWrap(True)
-        text.setObjectName("SecondaryLabel")
-        self.clear_log_button = QPushButton("清空日志")
-        self.clear_log_button.clicked.connect(self.clear_log)
-        top_layout.addWidget(text, 1)
-        top_layout.addWidget(self.clear_log_button)
-        layout.addWidget(top_card)
+        card = self._card()
+        layout.addWidget(card)
+        grid = QGridLayout(card)
+        spacing = 8 if self.compact_dpi_layout else 12
+        margin = 12 if self.compact_dpi_layout else 18
+        grid.setContentsMargins(margin, margin, margin, margin)
+        grid.setHorizontalSpacing(spacing)
+        grid.setVerticalSpacing(spacing)
+        grid.setColumnStretch(0, 0)
+        grid.setColumnStretch(1, 1)
+        grid.setColumnStretch(2, 1)
+        grid.setColumnMinimumWidth(0, self.fontMetrics().horizontalAdvance("模拟器/游戏路径") + 18)
 
-        log_card = self._card()
-        log_layout = QVBoxLayout(log_card)
-        log_layout.setContentsMargins(12, 12, 12, 12)
+        intro = QLabel("快捷存档游戏启动器")
+        intro.setWordWrap(True)
+        intro.setObjectName("SecondaryLabel")
+        grid.addWidget(intro, 0, 0, 1, 3)
+        self._add_labeled_entry(grid, 1, "模拟器/游戏路径", self.emulator_path_edit, browse_callback=self.pick_emulator)
+        self._add_labeled_entry(
+            grid,
+            2,
+            "目标窗口",
+            self.target_window_label,
+            hint="点击后在 5 秒内使用 Alt+Tab 切换到目标游戏或程序窗口",
+            extra_button=self.capture_window_button,
+        )
+
+        self.create_launcher_shortcut_button = QPushButton("创建此游戏云存档启动器至桌面")
+        self.create_launcher_shortcut_button.clicked.connect(self.create_current_game_launcher_shortcut)
+        layout.addWidget(self.create_launcher_shortcut_button)
+        layout.addStretch(1)
+
+        # Keep the existing logging calls functional without exposing a logs page.
         self.log_text = QPlainTextEdit()
         self.log_text.setReadOnly(True)
-        self.log_text.setObjectName("LogText")
-        log_layout.addWidget(self.log_text)
-        layout.addWidget(log_card, 1)
+        self.log_text.hide()
 
     def _apply_styles(self) -> None:
         font = QFont("Microsoft YaHei UI", 8 if self.compact_dpi_layout else 10)
         QApplication.instance().setFont(font)
+        combo_arrow_path = (self.resource_dir / "assets" / "combo_down_arrow.png").as_posix()
         base_style = (
             """
             QMainWindow, QWidget {
@@ -536,6 +541,11 @@ class GamesCloudSaveApp(QMainWindow):
                 background: #eef2f6;
                 border-left: 1px solid #9aa8b5;
             }
+            QComboBox#GameSelector::down-arrow {
+                image: url(COMBO_ARROW_PATH);
+                width: 14px;
+                height: 14px;
+            }
             QComboBox#GameSelector:hover {
                 border-color: #268cc7;
                 background: #ffffff;
@@ -615,7 +625,7 @@ class GamesCloudSaveApp(QMainWindow):
                 height: 10px;
             }
             """
-        )
+        ).replace("COMBO_ARROW_PATH", combo_arrow_path)
         compact_style = """
             QLabel#TitleLabel {
                 font-size: 18px;
