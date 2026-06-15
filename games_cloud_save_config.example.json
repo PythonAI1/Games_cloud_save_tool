@@ -15,7 +15,8 @@
       "download_mode": "overwrite",
       "backup_before_overwrite": true,
       "pending_restore": null,
-      "last_uploaded_at": ""
+      "last_uploaded_at": "",
+      "last_downloaded_zip_sha256": ""
     }
   ],
   "current_game_id": "game_1"
