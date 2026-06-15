@@ -85,17 +85,24 @@ def get_remote_info(config_data: dict, game_id: str) -> dict:
         raise
 
 
-def upload_game(
+def build_upload_metadata(device_name: str, zip_sha256: str, zip_size: int) -> dict:
+    return {
+        "uploaded_at": now_text(),
+        "device_name": device_name,
+        "zip_sha256": zip_sha256,
+        "zip_size": zip_size,
+    }
+
+
+def upload_game_archive(
     config_data: dict,
     game_id: str,
-    config_path: Path,
     emit_progress: ProgressCallback,
     emit_log: LogCallback = _ignore_log,
 ) -> dict:
     temp_zip: str | None = None
     try:
         game, token, repo, branch, save_dir, zip_path = validate_sync_inputs(config_data, game_id)
-        json_path = metadata_path_for_zip(zip_path)
 
         emit_progress(5, "正在扫描本地存档文件...")
         files, total_bytes = collect_files(save_dir)
@@ -118,20 +125,8 @@ def upload_game(
             emit_progress=emit_progress,
         )
 
-        metadata = {
-            "uploaded_at": now_text(),
-            "device_name": default_device_name(),
-            "zip_sha256": zip_sha256,
-            "zip_size": zip_size,
-        }
-        emit_progress(69, "正在准备上传元数据...")
-        json_encoded = base64.b64encode(
-            json.dumps(metadata, ensure_ascii=False, indent=2).encode("utf-8")
-        ).decode("ascii")
-
         emit_progress(74, "正在检查 GitHub 上是否已有旧备份...")
         existing_zip_sha = get_existing_file_sha(token, repo, zip_path, branch)
-        existing_json_sha = get_existing_file_sha(token, repo, json_path, branch)
 
         emit_progress(82, transfer_status("正在上传 zip 存档包...", file_size=format_size(zip_size)))
         upload_speed = put_file_to_github(
@@ -143,32 +138,14 @@ def upload_game(
             f"Update Games cloud save zip {time.strftime('%Y-%m-%d %H:%M:%S')}",
             existing_zip_sha,
         )
-        emit_progress(
-            92,
-            transfer_status(
-                "正在上传元数据 json...",
-                speed=f"{format_size(int(upload_speed))}/s",
-                file_size=format_size(zip_size),
-            ),
-        )
-        put_file_to_github(
-            token,
-            repo,
-            json_path,
-            branch,
-            json_encoded,
-            f"Update Games cloud save metadata {time.strftime('%Y-%m-%d %H:%M:%S')}",
-            existing_json_sha,
-        )
-
-        game["last_uploaded_at"] = metadata["uploaded_at"]
-        update_game_fields(config_path, game_id, {"last_uploaded_at": metadata["uploaded_at"]})
         emit_log(f"上传完成：{repo}/{zip_path}")
-        emit_log(f"元数据已更新：{repo}/{json_path}")
-        emit_progress(100, "上传完成")
         return {
-            "message": "上传完成，云端存档和元数据都已更新。",
-            "metadata": metadata,
+            "repo": repo,
+            "branch": branch,
+            "zip_path": zip_path,
+            "upload_speed": upload_speed,
+            "zip_size": zip_size,
+            "metadata": build_upload_metadata(default_device_name(), zip_sha256, zip_size),
         }
     finally:
         if temp_zip and os.path.exists(temp_zip):
@@ -176,6 +153,75 @@ def upload_game(
                 os.remove(temp_zip)
             except OSError:
                 pass
+
+
+def update_game_metadata(
+    config_data: dict,
+    game_id: str,
+    config_path: Path,
+    metadata: dict,
+    emit_progress: ProgressCallback,
+    emit_log: LogCallback = _ignore_log,
+    upload_speed: float | None = None,
+) -> dict:
+    game, token, repo, branch, _save_dir, zip_path = validate_sync_inputs(config_data, game_id)
+    json_path = metadata_path_for_zip(zip_path)
+    emit_progress(
+        92,
+        transfer_status(
+            "正在上传元数据 json...",
+            speed=f"{format_size(int(upload_speed or 0))}/s" if upload_speed else None,
+            file_size=format_size(int(metadata.get("zip_size", 0))) if metadata.get("zip_size") else None,
+        ),
+    )
+    json_encoded = base64.b64encode(
+        json.dumps(metadata, ensure_ascii=False, indent=2).encode("utf-8")
+    ).decode("ascii")
+    existing_json_sha = get_existing_file_sha(token, repo, json_path, branch)
+    put_file_to_github(
+        token,
+        repo,
+        json_path,
+        branch,
+        json_encoded,
+        f"Update Games cloud save metadata {time.strftime('%Y-%m-%d %H:%M:%S')}",
+        existing_json_sha,
+    )
+
+    game["last_uploaded_at"] = str(metadata["uploaded_at"])
+    update_game_fields(
+        config_path,
+        game_id,
+        {
+            "last_uploaded_at": str(metadata["uploaded_at"]),
+            "last_downloaded_zip_sha256": str(metadata.get("zip_sha256", "")).strip(),
+        },
+    )
+    emit_log(f"元数据已更新：{repo}/{json_path}")
+    emit_progress(100, "上传完成")
+    return {
+        "message": "上传完成，云端存档和元数据都已更新。",
+        "metadata": metadata,
+    }
+
+
+def upload_game(
+    config_data: dict,
+    game_id: str,
+    config_path: Path,
+    emit_progress: ProgressCallback,
+    emit_log: LogCallback = _ignore_log,
+) -> dict:
+    archive_result = upload_game_archive(config_data, game_id, emit_progress, emit_log)
+    return update_game_metadata(
+        config_data,
+        game_id,
+        config_path,
+        archive_result["metadata"],
+        emit_progress,
+        emit_log,
+        archive_result["upload_speed"],
+    )
 
 
 def download_game(
@@ -195,7 +241,9 @@ def download_game(
         download_url = get_download_url(token, repo, zip_path, branch)
         emit_progress(18, "正在下载云端 zip 压缩包...")
         temp_zip = download_file(download_url, emit_progress)
-        emit_log(f"云端压缩包下载完成：{format_size(os.path.getsize(temp_zip))}")
+        zip_size = os.path.getsize(temp_zip)
+        zip_sha256 = sha256_of_file(temp_zip)
+        emit_log(f"云端压缩包下载完成：{format_size(zip_size)}，SHA256={zip_sha256[:16]}...")
 
         emit_progress(60, "正在校验压缩包结构...")
         validate_zip_members(temp_zip)
@@ -222,7 +270,14 @@ def download_game(
             "created_at": now_text(),
         }
         game["pending_restore"] = pending_state
-        update_game_fields(config_path, game_id, {"pending_restore": pending_state})
+        update_game_fields(
+            config_path,
+            game_id,
+            {
+                "pending_restore": pending_state,
+                "last_downloaded_zip_sha256": zip_sha256,
+            },
+        )
         emit_log(f"已生成最近一次下载前备份：{snapshot_dir}")
         emit_log(f"下载模式：备份后覆盖本地存档 -> {destination_dir}")
 
@@ -232,13 +287,24 @@ def download_game(
         emit_log(f"已用云端存档完整覆盖本地目录：{destination_dir}")
 
         game["pending_restore"] = pending_state
-        update_game_fields(config_path, game_id, {"pending_restore": pending_state})
+        update_game_fields(
+            config_path,
+            game_id,
+            {
+                "pending_restore": pending_state,
+                "last_downloaded_zip_sha256": zip_sha256,
+            },
+        )
         message = (
             f"下载完成，已备份原本地存档并用云端存档覆盖：\n{destination_dir}"
             "\n\n最近一次下载前备份可随时在主程序中回退。"
         )
         emit_progress(100, "下载完成")
-        return {"message": message, "pending_restore": pending_state}
+        return {
+            "message": message,
+            "pending_restore": pending_state,
+            "zip_sha256": zip_sha256,
+        }
     except Exception:
         raise
     finally:
@@ -273,6 +339,6 @@ def rollback_game(
     if pending_root.exists():
         shutil.rmtree(pending_root, ignore_errors=True)
     game["pending_restore"] = None
-    update_game_fields(config_path, game_id, {"pending_restore": None})
+    update_game_fields(config_path, game_id, {"pending_restore": None, "last_downloaded_zip_sha256": ""})
     emit_progress(100, "回退完成")
     return {"message": "已回退到最近一次下载前的本地备份，该备份已删除。"}

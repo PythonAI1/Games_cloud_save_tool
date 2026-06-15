@@ -1,4 +1,5 @@
 import base64
+import hashlib
 import os
 import shutil
 import tempfile
@@ -7,6 +8,27 @@ import zipfile
 from pathlib import Path
 
 from utils import format_timestamp
+
+
+def snapshot_save_directory(save_dir: Path) -> str:
+    if not save_dir.exists() or not save_dir.is_dir():
+        raise RuntimeError(f"本地存档目录不存在：\n{save_dir}")
+
+    digest = hashlib.sha256()
+    files = sorted((path for path in save_dir.rglob("*") if path.is_file()), key=lambda path: path.as_posix())
+    for file_path in files:
+        relative = file_path.relative_to(save_dir).as_posix().encode("utf-8")
+        size = file_path.stat().st_size
+        digest.update(len(relative).to_bytes(4, "big"))
+        digest.update(relative)
+        digest.update(size.to_bytes(8, "big"))
+        with file_path.open("rb") as handle:
+            while True:
+                chunk = handle.read(1024 * 256)
+                if not chunk:
+                    break
+                digest.update(chunk)
+    return digest.hexdigest()
 
 
 def collect_files(save_dir: Path) -> tuple[list[Path], int]:
@@ -151,7 +173,14 @@ def path_mtime_text(path: Path) -> str:
 
 
 def validate_zip_members(zip_path: str) -> None:
+    if not os.path.exists(zip_path):
+        raise RuntimeError("下载后的压缩包不存在。")
+    if os.path.getsize(zip_path) <= 0:
+        raise RuntimeError("下载后的压缩包为空文件。")
     with zipfile.ZipFile(zip_path, "r") as archive:
+        broken_member = archive.testzip()
+        if broken_member:
+            raise RuntimeError(f"压缩包校验失败，损坏文件：{broken_member}")
         for member in archive.infolist():
             member_path = Path(member.filename)
             if member_path.is_absolute():

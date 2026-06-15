@@ -12,6 +12,7 @@ from PyQt5.QtWidgets import (
     QDialog,
     QFrame,
     QHBoxLayout,
+    QInputDialog,
     QLabel,
     QMessageBox,
     QProgressBar,
@@ -23,9 +24,11 @@ from config import load_config, save_config, update_current_game_id
 from cloud_sync_service import (
     download_game,
     get_remote_info as service_get_remote_info,
-    upload_game,
+    update_game_metadata,
+    upload_game_archive,
 )
 from constants import APP_DATA_DIR_NAME, CONFIG_FILE_NAME
+from save_manager import snapshot_save_directory
 from utils import default_device_name, now_text, parse_transfer_status, remote_zip_path_from_input
 
 
@@ -236,6 +239,7 @@ def build_default_config() -> dict:
                 "pending_restore": None,
                 "detect_type": "manual",
                 "last_uploaded_at": "",
+                "last_downloaded_zip_sha256": "",
             }
         ],
         "current_game_id": "game_1",
@@ -300,6 +304,7 @@ def normalize_config(saved: dict) -> dict:
                     "pending_restore": normalize_pending_restore_state(item.get("pending_restore")),
                     "detect_type": str(item.get("detect_type", "manual")),
                     "last_uploaded_at": str(item.get("last_uploaded_at", "")),
+                    "last_downloaded_zip_sha256": str(item.get("last_downloaded_zip_sha256", "")).strip(),
                 }
             )
 
@@ -359,10 +364,45 @@ def show_error_message(title: str, message: str) -> None:
     QMessageBox.critical(None, title, message)
 
 
-def show_timed_info(title: str, message: str, milliseconds: int = 1000) -> None:
+def show_timed_info(title: str, message: str, milliseconds: int = 2000) -> None:
     box = QMessageBox(QMessageBox.Information, title, message, QMessageBox.NoButton)
     QTimer.singleShot(milliseconds, box.accept)
     box.exec_()
+
+
+def ask_retry_or_skip(title: str, message: str) -> bool:
+    box = QMessageBox(QMessageBox.Warning, title, f"{message}\n\n请检查网络后重试。", QMessageBox.NoButton)
+    retry_button = box.addButton("重试", QMessageBox.AcceptRole)
+    box.addButton("跳过", QMessageBox.RejectRole)
+    box.exec_()
+    return box.clickedButton() is retry_button
+
+
+def select_game_for_launch(config_data: dict, fixed_game_id: str | None = None) -> dict | None:
+    if fixed_game_id:
+        return get_game_by_id(config_data, fixed_game_id)
+
+    games = config_data["games"]
+    names = [str(game["name"]) for game in games]
+    current_id = str(config_data.get("current_game_id", ""))
+    current_index = next((index for index, game in enumerate(games) if game["id"] == current_id), 0)
+    selected_name, accepted = QInputDialog.getItem(
+        None,
+        "选择游戏",
+        "请选择要启动的游戏：",
+        names,
+        current_index,
+        False,
+    )
+    if not accepted:
+        return None
+
+    for game in games:
+        if game["name"] == selected_name:
+            config_data["current_game_id"] = game["id"]
+            update_current_game_id(resolve_config_path(), str(game["id"]))
+            return game
+    return None
 
 
 class DownloadPromptDialog(QDialog):
@@ -632,9 +672,8 @@ class TargetWindowWaitDialog(QDialog):
         self.accept()
 
 
-class UploadWorker(QObject):
-    progress_changed = pyqtSignal(int, str)
-    finished = pyqtSignal(str)
+class MetadataWorker(QObject):
+    finished = pyqtSignal(object)
     failed = pyqtSignal(str)
 
     def __init__(self, config_data: dict, game_id: str) -> None:
@@ -642,19 +681,9 @@ class UploadWorker(QObject):
         self.config_data = config_data
         self.game_id = game_id
 
-    def emit_progress(self, value: float, status: str) -> None:
-        self.progress_changed.emit(int(max(0, min(100, value))), status)
-
     def run(self) -> None:
         try:
-            result = upload_game(
-                self.config_data,
-                self.game_id,
-                resolve_config_path(),
-                self.emit_progress,
-            )
-            time.sleep(0.2)
-            self.finished.emit(str(result["message"]))
+            self.finished.emit(service_get_remote_info(self.config_data, self.game_id))
         except Exception as exc:
             self.failed.emit(str(exc))
 
@@ -687,20 +716,82 @@ class DownloadWorker(QObject):
             self.failed.emit(str(exc))
 
 
-def run_worker_dialog(worker: QObject, title: str, initial_status: str) -> tuple[bool, str]:
+class ArchiveUploadWorker(QObject):
+    progress_changed = pyqtSignal(int, str)
+    finished = pyqtSignal(object)
+    failed = pyqtSignal(str)
+
+    def __init__(self, config_data: dict, game_id: str) -> None:
+        super().__init__()
+        self.config_data = config_data
+        self.game_id = game_id
+
+    def emit_progress(self, value: float, status: str) -> None:
+        self.progress_changed.emit(int(max(0, min(100, value))), status)
+
+    def run(self) -> None:
+        try:
+            result = upload_game_archive(
+                self.config_data,
+                self.game_id,
+                self.emit_progress,
+            )
+            time.sleep(0.2)
+            self.finished.emit(result)
+        except Exception as exc:
+            self.failed.emit(str(exc))
+
+
+class MetadataUpdateWorker(QObject):
+    progress_changed = pyqtSignal(int, str)
+    finished = pyqtSignal(object)
+    failed = pyqtSignal(str)
+
+    def __init__(self, config_data: dict, game_id: str, metadata: dict, upload_speed: float | None) -> None:
+        super().__init__()
+        self.config_data = config_data
+        self.game_id = game_id
+        self.metadata = metadata
+        self.upload_speed = upload_speed
+
+    def emit_progress(self, value: float, status: str) -> None:
+        self.progress_changed.emit(int(max(0, min(100, value))), status)
+
+    def run(self) -> None:
+        try:
+            result = update_game_metadata(
+                self.config_data,
+                self.game_id,
+                resolve_config_path(),
+                self.metadata,
+                self.emit_progress,
+                upload_speed=self.upload_speed,
+            )
+            time.sleep(0.2)
+            self.finished.emit(result)
+        except Exception as exc:
+            self.failed.emit(str(exc))
+
+
+def run_worker_dialog(worker: QObject, title: str, initial_status: str) -> tuple[bool, object]:
     dialog = ProgressDialog(title, initial_status)
     thread = QThread()
-    result_holder = {"ok": False, "message": ""}
+    result_holder = {"ok": False, "payload": ""}
 
     worker.moveToThread(thread)
     thread.started.connect(worker.run)
-    worker.progress_changed.connect(dialog.update_progress)
+    if hasattr(worker, "progress_changed"):
+        worker.progress_changed.connect(dialog.update_progress)
 
     if hasattr(worker, "finished"):
         def on_finished(*args):
-            message = str(args[0]) if args else ""
             result_holder["ok"] = True
-            result_holder["message"] = message
+            if not args:
+                result_holder["payload"] = ""
+            elif len(args) == 1:
+                result_holder["payload"] = args[0]
+            else:
+                result_holder["payload"] = args
             dialog.accept()
 
         worker.finished.connect(on_finished)
@@ -727,7 +818,7 @@ def run_worker_dialog(worker: QObject, title: str, initial_status: str) -> tuple
         thread.quit()
         thread.wait()
 
-    return result_holder["ok"], result_holder["message"]
+    return result_holder["ok"], result_holder["payload"]
 
 
 def launch_configured_program(game: dict) -> subprocess.Popen:
@@ -809,79 +900,175 @@ def wait_for_window_close(hwnd: int) -> None:
         pump_ui()
 
 
-def prompt_download_before_launch(
-    config_data: dict,
-    fixed_game_id: str | None = None,
-    program_started: bool = False,
-) -> str | None:
-    if fixed_game_id:
-        get_game_by_id(config_data, fixed_game_id)
-    dialog = DownloadPromptDialog(config_data, fixed_game_id, program_started)
-    result = dialog.exec_()
-    if result != QDialog.Accepted:
-        return None
-    selected_game_id = dialog.selected_game_id()
-    config_data["current_game_id"] = selected_game_id
-    update_current_game_id(resolve_config_path(), selected_game_id)
-    if dialog.choice != "download":
-        return selected_game_id
+def run_metadata_dialog(config_data: dict, game: dict) -> tuple[bool, dict | str]:
+    dialog = ProgressDialog("读取云端信息", "正在读取云端 Metadata...")
+    dialog.progress_bar.setRange(0, 0)
+    dialog.percent_label.setText("")
+    thread = QThread()
+    worker = MetadataWorker(config_data, str(game["id"]))
+    result_holder: dict[str, object] = {"ok": False, "result": ""}
 
-    game = get_game_by_id(config_data, selected_game_id)
-    worker = DownloadWorker(config_data, game["id"])
-    ok, message = run_worker_dialog(worker, "下载进度", "准备下载云端存档...")
-    if not ok:
-        show_error_message("下载失败", message)
-        return None
-    show_timed_info("下载完成", message)
-    return selected_game_id
+    worker.moveToThread(thread)
+    thread.started.connect(worker.run)
+
+    def on_finished(result: object) -> None:
+        result_holder["ok"] = True
+        result_holder["result"] = result
+        dialog.accept()
+
+    def on_failed(message: str) -> None:
+        result_holder["ok"] = False
+        result_holder["result"] = message
+        dialog.reject()
+
+    worker.finished.connect(on_finished)
+    worker.finished.connect(thread.quit)
+    worker.failed.connect(on_failed)
+    worker.failed.connect(thread.quit)
+    thread.finished.connect(worker.deleteLater)
+    thread.finished.connect(thread.deleteLater)
+    thread.start()
+    dialog.exec_()
+
+    if thread.isRunning():
+        thread.quit()
+        thread.wait()
+
+    return bool(result_holder["ok"]), result_holder["result"]
 
 
-def confirm_upload(game: dict) -> bool:
-    dialog = UploadPromptDialog(game)
-    return dialog.exec_() == QDialog.Accepted and dialog.choice == "upload"
+def fetch_remote_info_with_retry(config_data: dict, game: dict) -> tuple[dict | None, bool]:
+    while True:
+        ok, result = run_metadata_dialog(config_data, game)
+        if ok and isinstance(result, dict):
+            return result, True
+        if ask_retry_or_skip("云端信息读取失败", str(result)):
+            continue
+        show_timed_info("已跳过", "云端信息读取失败，已跳过本次云端检查。", 2000)
+        return None, False
+
+
+def run_download_with_retry(config_data: dict, game: dict) -> bool:
+    while True:
+        worker = DownloadWorker(config_data, game["id"])
+        ok, payload = run_worker_dialog(worker, "下载进度", "准备下载云端存档...")
+        if ok and isinstance(payload, tuple) and len(payload) >= 1:
+            show_timed_info("下载成功", str(payload[0]), 2000)
+            return True
+        if ask_retry_or_skip("下载失败", str(payload)):
+            continue
+        show_timed_info("下载失败", "下载失败，已跳过本次下载。", 2000)
+        return False
+
+
+def run_upload_with_retry(config_data: dict, game: dict) -> bool:
+    archive_result: dict | None = None
+    while archive_result is None:
+        worker = ArchiveUploadWorker(config_data, game["id"])
+        ok, payload = run_worker_dialog(worker, "上传进度", "准备上传本地存档到 GitHub...")
+        if ok and isinstance(payload, dict):
+            archive_result = payload
+            break
+        if not ask_retry_or_skip("上传失败", str(payload)):
+            show_timed_info("上传失败", "上传失败，已结束本次上传。", 2000)
+            return False
+
+    while True:
+        metadata = dict(archive_result["metadata"])
+        worker = MetadataUpdateWorker(
+            config_data,
+            game["id"],
+            metadata,
+            archive_result.get("upload_speed"),
+        )
+        ok, payload = run_worker_dialog(worker, "同步进度", "正在更新云端 Metadata...")
+        if ok and isinstance(payload, dict):
+            show_timed_info("上传成功", str(payload["message"]), 2000)
+            return True
+        if ask_retry_or_skip("Metadata 更新失败", str(payload)):
+            continue
+        show_timed_info(
+            "同步未完成",
+            "存档已上传，但设备标记更新失败。下次启动时可能仍会提示下载。",
+            2000,
+        )
+        return False
+
+
+def confirm_risky_upload() -> bool:
+    result = QMessageBox.warning(
+        None,
+        "上传风险确认",
+        "启动前本应下载云端存档，但本次已跳过或下载失败。\n\n"
+        "当前本地存档可能不是最新版本，继续上传可能覆盖云端较新的存档。\n\n"
+        "是否仍要继续上传？",
+        QMessageBox.Yes | QMessageBox.No,
+        QMessageBox.No,
+    )
+    return result == QMessageBox.Yes
+
+
+def prepare_startup_sync(config_data: dict, game: dict) -> bool:
+    remote_info, metadata_ok = fetch_remote_info_with_retry(config_data, game)
+    if not metadata_ok:
+        return False
+
+    if remote_info is None:
+        return False
+
+    if remote_info.get("not_uploaded"):
+        show_timed_info("跳过下载", "云端暂无存档，跳过下载。", 2000)
+        return True
+
+    remote_device = str(remote_info.get("device_name", "")).strip().casefold()
+    if remote_device and remote_device == default_device_name().casefold():
+        show_timed_info("跳过下载", "云存档来自此设备，跳过下载。", 2000)
+        return True
+
+    remote_zip_sha256 = str(remote_info.get("zip_sha256", "")).strip()
+    local_downloaded_zip_sha256 = str(game.get("last_downloaded_zip_sha256", "")).strip()
+    if remote_zip_sha256 and local_downloaded_zip_sha256 and remote_zip_sha256 == local_downloaded_zip_sha256:
+        show_timed_info("跳过下载", "本地已是同一份云端存档，跳过重复下载。", 2000)
+        return True
+
+    return run_download_with_retry(config_data, game)
 
 
 def launch_monitor_then_sync(config_data: dict, fixed_game_id: str | None = None) -> int:
-    if fixed_game_id:
-        launch_game = get_game_by_id(config_data, fixed_game_id)
-        target_window = normalize_target_window(launch_game.get("target_window"))
-        if not target_window:
-            raise RuntimeError(
-                f"游戏“{launch_game['name']}”尚未记录目标窗口。\n\n"
-                "请先到 GameCloudSave 设置页点击“记录目标窗口”。"
-            )
-        launch_configured_program(launch_game)
-        selected_game_id = prompt_download_before_launch(config_data, fixed_game_id, program_started=True)
-        if not selected_game_id:
-            return 0
-    else:
-        selected_game_id = prompt_download_before_launch(config_data)
-        if not selected_game_id:
-            return 0
-        launch_game = get_game_by_id(config_data, selected_game_id)
-        target_window = normalize_target_window(launch_game.get("target_window"))
-        if not target_window:
-            raise RuntimeError(
-                f"游戏“{launch_game['name']}”尚未记录目标窗口。\n\n"
-                "请先到 GameCloudSave 设置页点击“记录目标窗口”。"
-            )
-        launch_configured_program(launch_game)
+    launch_game = select_game_for_launch(config_data, fixed_game_id)
+    if launch_game is None:
+        return 0
+
+    target_window = normalize_target_window(launch_game.get("target_window"))
+    if not target_window:
+        raise RuntimeError(
+            f"游戏“{launch_game['name']}”尚未记录目标窗口。\n\n"
+            "请先到 GameCloudSave 设置页点击“记录目标窗口”。"
+        )
+
+    startup_sync_safe = prepare_startup_sync(config_data, launch_game)
+
+    save_dir = Path(str(launch_game.get("save_path", "")).strip())
+    baseline_snapshot = snapshot_save_directory(save_dir)
+
+    launch_configured_program(launch_game)
 
     hwnd = wait_for_target_window(launch_game, target_window)
     if not hwnd:
+        show_timed_info("已取消", "已取消目标窗口监控。", 2000)
         return 0
     wait_for_window_close(hwnd)
 
-    if not confirm_upload(launch_game):
+    current_snapshot = snapshot_save_directory(save_dir)
+    if current_snapshot == baseline_snapshot:
+        show_timed_info("跳过上传", "存档未变化，跳过上传。", 2000)
         return 0
 
-    worker = UploadWorker(config_data, launch_game["id"])
-    ok, message = run_worker_dialog(worker, "上传进度", "准备上传本地存档到 GitHub...")
-    if not ok:
-        show_error_message("上传失败", message)
-        return 1
-    show_timed_info("上传完成", message)
-    return 0
+    if not startup_sync_safe and not confirm_risky_upload():
+        show_timed_info("已取消", "已取消上传。", 2000)
+        return 0
+
+    return 0 if run_upload_with_retry(config_data, launch_game) else 1
 
 
 def bound_game_id_from_args(args: list[str]) -> str | None:

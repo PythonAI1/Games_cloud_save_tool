@@ -733,6 +733,7 @@ class GamesCloudSaveApp(QMainWindow):
                 remote_zip_path = remote_zip_path_from_input(str(item.get("remote_zip_path", "")))
                 pending_restore = self._normalize_pending_restore_state(item.get("pending_restore"))
                 last_uploaded_at = str(item.get("last_uploaded_at", ""))
+                last_downloaded_zip_sha256 = str(item.get("last_downloaded_zip_sha256", "")).strip()
                 games.append(
                     {
                         "id": game_id,
@@ -746,6 +747,7 @@ class GamesCloudSaveApp(QMainWindow):
                         "backup_before_overwrite": True,
                         "pending_restore": pending_restore,
                         "last_uploaded_at": last_uploaded_at,
+                        "last_downloaded_zip_sha256": last_downloaded_zip_sha256,
                     }
                 )
 
@@ -767,6 +769,7 @@ class GamesCloudSaveApp(QMainWindow):
                     "backup_before_overwrite": True,
                     "pending_restore": legacy_pending,
                     "last_uploaded_at": "",
+                    "last_downloaded_zip_sha256": "",
                 }
             ]
 
@@ -803,6 +806,8 @@ class GamesCloudSaveApp(QMainWindow):
 
     def _update_current_game_from_ui(self) -> None:
         game = self._current_game()
+        previous_save_path = str(game.get("save_path", ""))
+        previous_remote_zip_path = str(game.get("remote_zip_path", ""))
         game["emulator_path"] = self._emulator_path()
         game["game_root_path"] = self._game_root()
         game["save_path"] = self._save_path()
@@ -810,6 +815,8 @@ class GamesCloudSaveApp(QMainWindow):
         game["download_mode"] = "overwrite"
         game["backup_before_overwrite"] = True
         game["pending_restore"] = self.pending_restore_state
+        if previous_save_path != game["save_path"] or previous_remote_zip_path != game["remote_zip_path"]:
+            game["last_downloaded_zip_sha256"] = ""
 
     def _load_current_game_into_ui(self) -> None:
         game = self._current_game()
@@ -867,6 +874,7 @@ class GamesCloudSaveApp(QMainWindow):
                 "backup_before_overwrite": True,
                 "pending_restore": None,
                 "last_uploaded_at": "",
+                "last_downloaded_zip_sha256": "",
             }
         )
         self.current_game_id = new_id
