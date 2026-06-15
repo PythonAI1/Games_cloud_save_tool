@@ -1,4 +1,5 @@
 import base64
+import hashlib
 import os
 import shutil
 import tempfile
@@ -7,6 +8,27 @@ import zipfile
 from pathlib import Path
 
 from utils import format_timestamp
+
+
+def snapshot_save_directory(save_dir: Path) -> str:
+    if not save_dir.exists() or not save_dir.is_dir():
+        raise RuntimeError(f"本地存档目录不存在：\n{save_dir}")
+
+    digest = hashlib.sha256()
+    files = sorted((path for path in save_dir.rglob("*") if path.is_file()), key=lambda path: path.as_posix())
+    for file_path in files:
+        relative = file_path.relative_to(save_dir).as_posix().encode("utf-8")
+        size = file_path.stat().st_size
+        digest.update(len(relative).to_bytes(4, "big"))
+        digest.update(relative)
+        digest.update(size.to_bytes(8, "big"))
+        with file_path.open("rb") as handle:
+            while True:
+                chunk = handle.read(1024 * 256)
+                if not chunk:
+                    break
+                digest.update(chunk)
+    return digest.hexdigest()
 
 
 def collect_files(save_dir: Path) -> tuple[list[Path], int]:
@@ -161,8 +183,6 @@ def validate_zip_members(zip_path: str) -> None:
 
 
 def sha256_of_file(file_path: str) -> str:
-    import hashlib
-
     digest = hashlib.sha256()
     with open(file_path, "rb") as handle:
         while True:

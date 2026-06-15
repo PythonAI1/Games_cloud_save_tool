@@ -37,6 +37,7 @@ from PyQt5.QtWidgets import (
 from config import load_config, save_config
 from cloud_sync_service import download_game, get_remote_info, rollback_game, upload_game
 from constants import APP_DATA_DIR_NAME, CONFIG_FILE_NAME, DEFAULT_GAME_ID
+from instance_guard import SingleInstanceGuard
 from utils import (
     default_device_name,
     format_size,
@@ -64,6 +65,7 @@ kernel32.QueryFullProcessImageNameW.argtypes = [
     ctypes.POINTER(ctypes.c_ulong),
 ]
 kernel32.CloseHandle.argtypes = [ctypes.c_void_p]
+APP_INSTANCE_GUARD = SingleInstanceGuard("GamesCloudSave_Main_Instance")
 
 
 class GamesCloudSaveApp(QMainWindow):
@@ -1672,6 +1674,8 @@ class GamesCloudSaveApp(QMainWindow):
 
 
 def main() -> None:
+    if not APP_INSTANCE_GUARD.try_acquire():
+        return
     if os.name == "nt":
         ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("PythonAI1.GameCloudSave.Main")
     QApplication.setAttribute(Qt.AA_EnableHighDpiScaling, True)
@@ -1683,7 +1687,11 @@ def main() -> None:
         app.setWindowIcon(QIcon(str(icon_path)))
     window = GamesCloudSaveApp()
     window.show()
-    sys.exit(app.exec_())
+    try:
+        exit_code = app.exec_()
+    finally:
+        APP_INSTANCE_GUARD.release()
+    sys.exit(exit_code)
 
 
 if __name__ == "__main__":
