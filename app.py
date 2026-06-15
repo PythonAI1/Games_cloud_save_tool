@@ -22,6 +22,8 @@ from PyQt5.QtWidgets import (
     QInputDialog,
     QLabel,
     QLineEdit,
+    QListWidget,
+    QListWidgetItem,
     QMainWindow,
     QMessageBox,
     QPlainTextEdit,
@@ -50,11 +52,18 @@ from utils import (
 
 user32 = ctypes.windll.user32
 kernel32 = ctypes.windll.kernel32
+EnumWindowsProc = ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.c_void_p, ctypes.c_void_p)
+user32.EnumWindows.argtypes = [EnumWindowsProc, ctypes.c_void_p]
+user32.EnumWindows.restype = ctypes.c_bool
 user32.GetForegroundWindow.restype = ctypes.c_void_p
 user32.GetWindowTextLengthW.argtypes = [ctypes.c_void_p]
 user32.GetWindowTextW.argtypes = [ctypes.c_void_p, ctypes.c_wchar_p, ctypes.c_int]
 user32.GetClassNameW.argtypes = [ctypes.c_void_p, ctypes.c_wchar_p, ctypes.c_int]
 user32.GetWindowThreadProcessId.argtypes = [ctypes.c_void_p, ctypes.POINTER(ctypes.c_ulong)]
+user32.IsWindowVisible.argtypes = [ctypes.c_void_p]
+user32.IsWindowVisible.restype = ctypes.c_bool
+user32.GetWindow.argtypes = [ctypes.c_void_p, ctypes.c_uint]
+user32.GetWindow.restype = ctypes.c_void_p
 kernel32.OpenProcess.argtypes = [ctypes.c_ulong, ctypes.c_bool, ctypes.c_ulong]
 kernel32.OpenProcess.restype = ctypes.c_void_p
 kernel32.QueryFullProcessImageNameW.argtypes = [
@@ -64,6 +73,78 @@ kernel32.QueryFullProcessImageNameW.argtypes = [
     ctypes.POINTER(ctypes.c_ulong),
 ]
 kernel32.CloseHandle.argtypes = [ctypes.c_void_p]
+
+GW_OWNER = 4
+
+
+class TargetWindowSelectionDialog(QDialog):
+    def __init__(self, parent: QWidget | None, window_items: list[dict]) -> None:
+        super().__init__(parent)
+        self.setWindowTitle("选择目标窗口")
+        self.setModal(True)
+        self.setMinimumWidth(720)
+        self.setMinimumHeight(460)
+        self._window_items = window_items
+        self.selected_window: dict | None = None
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(18, 16, 18, 16)
+        layout.setSpacing(10)
+
+        intro = QLabel("请选择当前要监控关闭的游戏或程序窗口：")
+        intro.setWordWrap(True)
+        layout.addWidget(intro)
+
+        self.window_list = QListWidget()
+        self.window_list.setObjectName("TargetWindowList")
+        for item in window_items:
+            title = item["title"] or "无标题窗口"
+            display_text = f"{title} ({item['process_name']})"
+            row = QListWidgetItem(display_text)
+            row.setData(Qt.UserRole, item)
+            self.window_list.addItem(row)
+        self.window_list.itemDoubleClicked.connect(self._accept_selection)
+        self.window_list.currentItemChanged.connect(self._refresh_selection_tip)
+        layout.addWidget(self.window_list, 1)
+
+        self.selection_tip = QLabel("请选择一个窗口后点击“确定”。")
+        self.selection_tip.setWordWrap(True)
+        layout.addWidget(self.selection_tip)
+
+        button_row = QHBoxLayout()
+        button_row.addStretch(1)
+        self.refresh_button = QPushButton("刷新列表")
+        self.confirm_button = QPushButton("确定")
+        self.cancel_button = QPushButton("取消")
+        self.confirm_button.setEnabled(bool(window_items))
+        button_row.addWidget(self.refresh_button)
+        button_row.addWidget(self.confirm_button)
+        button_row.addWidget(self.cancel_button)
+        layout.addLayout(button_row)
+
+        self.refresh_button.clicked.connect(lambda: self.done(2))
+        self.confirm_button.clicked.connect(self._accept_selection)
+        self.cancel_button.clicked.connect(self.reject)
+
+        if window_items:
+            self.window_list.setCurrentRow(0)
+
+    def _refresh_selection_tip(self, current: QListWidgetItem | None, _previous: QListWidgetItem | None) -> None:
+        if current is None:
+            self.selection_tip.setText("请选择一个窗口后点击“确定”。")
+            return
+        item = current.data(Qt.UserRole)
+        self.selection_tip.setText(
+            f"已选窗口：{item['title'] or '无标题窗口'}\n"
+            f"进程：{item['process_name']}　类名：{item['class_name']}"
+        )
+
+    def _accept_selection(self) -> None:
+        current = self.window_list.currentItem()
+        if current is None:
+            return
+        self.selected_window = current.data(Qt.UserRole)
+        self.accept()
 
 
 class GamesCloudSaveApp(QMainWindow):
@@ -100,7 +181,6 @@ class GamesCloudSaveApp(QMainWindow):
         self.progress_dialog_speed_label: QLabel | None = None
         self.progress_dialog_size_label: QLabel | None = None
         self.startup_remote_refresh = False
-        self.window_capture_seconds = 0
 
         saved = self._normalize_config(self._load_saved_config())
         self.config_data = saved
@@ -405,7 +485,7 @@ class GamesCloudSaveApp(QMainWindow):
             2,
             "目标窗口",
             self.target_window_label,
-            hint="点击后在 5 秒内使用 Alt+Tab 切换到目标游戏或程序窗口",
+            hint="点击后从当前正在运行的窗口列表中选择要监控关闭的目标窗口",
             extra_button=self.capture_window_button,
         )
 
@@ -1044,24 +1124,32 @@ class GamesCloudSaveApp(QMainWindow):
         self._save_config()
 
     def start_target_window_capture(self) -> None:
-        if self.window_capture_seconds > 0:
-            return
-        self.window_capture_seconds = 5
-        self.capture_window_button.setEnabled(False)
-        self._advance_target_window_capture()
+        while True:
+            try:
+                candidates = self._list_visible_windows()
+            except Exception as exc:
+                self.status_label.setText("窗口列表读取失败。")
+                self._show_error("读取失败", str(exc))
+                return
 
-    def _advance_target_window_capture(self) -> None:
-        if self.window_capture_seconds > 0:
-            self.capture_window_button.setText(f"请切换窗口（{self.window_capture_seconds}）")
-            self.status_label.setText(f"请在 {self.window_capture_seconds} 秒内使用 Alt+Tab 切换到目标窗口。")
-            self.window_capture_seconds -= 1
-            QTimer.singleShot(1000, self._advance_target_window_capture)
-            return
+            if not candidates:
+                self.status_label.setText("当前没有可选择的窗口。")
+                self._show_warning("没有可选窗口", "当前没有检测到可选择的可见窗口，请先启动游戏或程序后再试。")
+                return
 
-        self.capture_window_button.setText("记录目标窗口")
-        self.capture_window_button.setEnabled(True)
-        try:
-            target_window = self._foreground_window_features()
+            dialog = TargetWindowSelectionDialog(self, candidates)
+            result = dialog.exec_()
+            if result == 2:
+                continue
+            if result != QDialog.Accepted or not dialog.selected_window:
+                self.status_label.setText("已取消目标窗口选择。")
+                return
+
+            target_window = {
+                "process_name": dialog.selected_window["process_name"],
+                "class_name": dialog.selected_window["class_name"],
+                "title_keyword": dialog.selected_window["title"],
+            }
             self._current_game()["target_window"] = target_window
             self._refresh_target_window_label()
             self._save_config()
@@ -1069,26 +1157,24 @@ class GamesCloudSaveApp(QMainWindow):
             self._show_info(
                 "记录完成",
                 "已记录目标窗口：\n"
+                f"标题：{target_window['title_keyword'] or '无标题窗口'}\n"
                 f"进程：{target_window['process_name']}\n"
-                f"类名：{target_window['class_name']}\n"
-                f"标题：{target_window['title_keyword'] or '无'}",
+                f"类名：{target_window['class_name']}",
             )
-        except Exception as exc:
-            self.status_label.setText("目标窗口记录失败。")
-            self._show_error("记录失败", str(exc))
+            return
 
-    def _foreground_window_features(self) -> dict:
-        hwnd = user32.GetForegroundWindow()
-        if not hwnd:
-            raise RuntimeError("没有获取到当前前台窗口，请重新记录。")
-
+    def _window_text(self, hwnd: int) -> str:
         title_length = user32.GetWindowTextLengthW(hwnd)
         title_buffer = ctypes.create_unicode_buffer(title_length + 1)
         user32.GetWindowTextW(hwnd, title_buffer, len(title_buffer))
+        return title_buffer.value.strip()
 
+    def _window_class_name(self, hwnd: int) -> str:
         class_buffer = ctypes.create_unicode_buffer(256)
         user32.GetClassNameW(hwnd, class_buffer, len(class_buffer))
+        return class_buffer.value.strip()
 
+    def _process_name_from_hwnd(self, hwnd: int) -> str:
         process_id = ctypes.c_ulong()
         user32.GetWindowThreadProcessId(hwnd, ctypes.byref(process_id))
         process_handle = kernel32.OpenProcess(0x1000, False, process_id.value)
@@ -1099,28 +1185,47 @@ class GamesCloudSaveApp(QMainWindow):
             path_size = ctypes.c_ulong(len(path_buffer))
             if not kernel32.QueryFullProcessImageNameW(process_handle, 0, path_buffer, ctypes.byref(path_size)):
                 raise RuntimeError("无法读取目标窗口所属进程名称。")
-            process_name = Path(path_buffer.value).name
+            return Path(path_buffer.value).name
         finally:
             kernel32.CloseHandle(process_handle)
 
-        class_name = class_buffer.value.strip()
-        if not process_name or not class_name:
-            raise RuntimeError("目标窗口特征不完整，请重新记录。")
-        return {
-            "process_name": process_name,
-            "class_name": class_name,
-            "title_keyword": title_buffer.value.strip(),
-        }
+    def _list_visible_windows(self) -> list[dict]:
+        items: list[dict] = []
+
+        @EnumWindowsProc
+        def enum_callback(hwnd, _lparam):
+            if not user32.IsWindowVisible(hwnd):
+                return True
+            if user32.GetWindow(hwnd, GW_OWNER):
+                return True
+            try:
+                title = self._window_text(int(hwnd))
+                class_name = self._window_class_name(int(hwnd))
+                process_name = self._process_name_from_hwnd(int(hwnd))
+            except Exception:
+                return True
+            if not title or not process_name or not class_name:
+                return True
+            items.append(
+                {
+                    "title": title,
+                    "process_name": process_name,
+                    "class_name": class_name,
+                }
+            )
+            return True
+
+        user32.EnumWindows(enum_callback, 0)
+        items.sort(key=lambda item: (item["process_name"].casefold(), item["title"].casefold()))
+        return items
 
     def _refresh_target_window_label(self) -> None:
         target = self._normalize_target_window(self._current_game().get("target_window"))
         if not target:
             self.target_window_label.setText("未记录")
             return
-        title = target["title_keyword"] or "无"
-        self.target_window_label.setText(
-            f"进程：{target['process_name']}　类名：{target['class_name']}　标题：{title}"
-        )
+        title = target["title_keyword"] or "无标题窗口"
+        self.target_window_label.setText(f"{title} ({target['process_name']})")
 
     def _refresh_open_save_folder_button_state(self) -> None:
         path_text = self._save_path()
