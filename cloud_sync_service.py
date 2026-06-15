@@ -195,7 +195,6 @@ def download_game(
         download_url = get_download_url(token, repo, zip_path, branch)
         emit_progress(18, "正在下载云端 zip 压缩包...")
         temp_zip = download_file(download_url, emit_progress)
-        downloaded_zip_sha256 = sha256_of_file(temp_zip)
         emit_log(f"云端压缩包下载完成：{format_size(os.path.getsize(temp_zip))}")
 
         emit_progress(60, "正在校验压缩包结构...")
@@ -223,15 +222,7 @@ def download_game(
             "created_at": now_text(),
         }
         game["pending_restore"] = pending_state
-        game["last_downloaded_zip_sha256"] = downloaded_zip_sha256
-        update_game_fields(
-            config_path,
-            game_id,
-            {
-                "pending_restore": pending_state,
-                "last_downloaded_zip_sha256": downloaded_zip_sha256,
-            },
-        )
+        update_game_fields(config_path, game_id, {"pending_restore": pending_state})
         emit_log(f"已生成最近一次下载前备份：{snapshot_dir}")
         emit_log(f"下载模式：备份后覆盖本地存档 -> {destination_dir}")
 
@@ -247,11 +238,7 @@ def download_game(
             "\n\n最近一次下载前备份可随时在主程序中回退。"
         )
         emit_progress(100, "下载完成")
-        return {
-            "message": message,
-            "pending_restore": pending_state,
-            "last_downloaded_zip_sha256": downloaded_zip_sha256,
-        }
+        return {"message": message, "pending_restore": pending_state}
     except Exception:
         raise
     finally:
@@ -286,14 +273,6 @@ def rollback_game(
     if pending_root.exists():
         shutil.rmtree(pending_root, ignore_errors=True)
     game["pending_restore"] = None
-    game["last_downloaded_zip_sha256"] = ""
-    update_game_fields(
-        config_path,
-        game_id,
-        {
-            "pending_restore": None,
-            "last_downloaded_zip_sha256": "",
-        },
-    )
+    update_game_fields(config_path, game_id, {"pending_restore": None})
     emit_progress(100, "回退完成")
     return {"message": "已回退到最近一次下载前的本地备份，该备份已删除。"}

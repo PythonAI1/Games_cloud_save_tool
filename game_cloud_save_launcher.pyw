@@ -240,7 +240,6 @@ def build_default_config() -> dict:
                 "pending_restore": None,
                 "detect_type": "manual",
                 "last_uploaded_at": "",
-                "last_downloaded_zip_sha256": "",
             }
         ],
         "current_game_id": "game_1",
@@ -305,7 +304,6 @@ def normalize_config(saved: dict) -> dict:
                     "pending_restore": normalize_pending_restore_state(item.get("pending_restore")),
                     "detect_type": str(item.get("detect_type", "manual")),
                     "last_uploaded_at": str(item.get("last_uploaded_at", "")),
-                    "last_downloaded_zip_sha256": str(item.get("last_downloaded_zip_sha256", "")),
                 }
             )
 
@@ -872,12 +870,6 @@ def prepare_startup_sync(config_data: dict, game: dict) -> tuple[bool, bool]:
     remote_device = str(remote_info.get("device_name", "")).strip().casefold()
     if remote_device and remote_device == default_device_name().casefold():
         show_timed_info("跳过下载", "云存档来自此设备，跳过下载。", 2000)
-        return True, False
-
-    remote_zip_sha256 = str(remote_info.get("zip_sha256", "")).strip().casefold()
-    last_downloaded_zip_sha256 = str(game.get("last_downloaded_zip_sha256", "")).strip().casefold()
-    if remote_zip_sha256 and remote_zip_sha256 == last_downloaded_zip_sha256:
-        show_timed_info("跳过下载", "云端存档已同步，跳过重复下载。", 2000)
         return True, False
 
     return True, not run_download_with_retry(config_data, game)
