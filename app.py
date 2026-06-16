@@ -266,11 +266,11 @@ class GamesCloudSaveApp(QMainWindow):
         self.game_selector.setCursor(Qt.PointingHandCursor)
         self.game_selector.currentIndexChanged.connect(self._on_game_selection_changed)
         game_row.addWidget(self.game_selector, 1)
-        self.add_game_button = QPushButton("新增游戏")
+        self.add_game_button = QPushButton("新增游戏配置")
         self.add_game_button.clicked.connect(self.add_game)
         self.rename_game_button = QPushButton("重命名")
         self.rename_game_button.clicked.connect(self.rename_current_game)
-        self.delete_game_button = QPushButton("删除游戏")
+        self.delete_game_button = QPushButton("删除游戏配置")
         self.delete_game_button.clicked.connect(self.delete_current_game)
         game_row.addWidget(self.add_game_button)
         game_row.addWidget(self.rename_game_button)
@@ -329,7 +329,7 @@ class GamesCloudSaveApp(QMainWindow):
         text.setObjectName("InfoText")
         if side == "local":
             self.local_text = text
-            self.rollback_backup_button = QPushButton("回退到最近一次下载前的本地存档")
+            self.rollback_backup_button = QPushButton("回滚存档")
             self.rollback_backup_button.clicked.connect(self.rollback_backup_result)
             inner.addWidget(self.rollback_backup_button)
         else:
@@ -595,12 +595,12 @@ class GamesCloudSaveApp(QMainWindow):
                 background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #125b94, stop:1 #197dca);
                 border-color: #104f81;
             }
-            QPushButton[text="回退到最近一次下载前的本地存档"] {
+            QPushButton[text="回滚存档"] {
                 background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #c97812, stop:1 #e6a52d);
                 color: #ffffff;
                 border-color: #bd6e0b;
             }
-            QPushButton[text="回退到最近一次下载前的本地存档"]:hover {
+            QPushButton[text="回滚存档"]:hover {
                 background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #af6508, stop:1 #d28f18);
                 border-color: #9d5905;
             }
@@ -960,7 +960,7 @@ class GamesCloudSaveApp(QMainWindow):
         self.refresh_local_info()
 
     def add_game(self) -> None:
-        name, ok = QInputDialog.getText(self, "新增游戏", "输入游戏名称：")
+        name, ok = QInputDialog.getText(self, "新增游戏配置", "输入游戏名称：")
         name = (name or "").strip()
         if not ok or not name:
             return
@@ -1002,7 +1002,7 @@ class GamesCloudSaveApp(QMainWindow):
             self._show_warning("无法删除", "至少需要保留一个游戏配置。")
             return
         game = self._current_game()
-        result = QMessageBox.question(self, "删除游戏", f"确定删除“{game['name']}”的配置吗？")
+        result = QMessageBox.question(self, "删除游戏配置", f"确定删除“{game['name']}”的配置吗？")
         if result != QMessageBox.Yes:
             return
         self.games = [item for item in self.games if item["id"] != self.current_game_id]
@@ -1682,8 +1682,7 @@ class GamesCloudSaveApp(QMainWindow):
                 lines.extend(
                     [
                         "",
-                        f"最近一次下载前备份时间：{pending.get('created_at', '未知')}",
-                        "可点击下方按钮随时回退。",
+                        "覆盖错误时，可点击回滚存档按钮，将存档还原为此次下载云存档前的本地存档。",
                     ]
                 )
             else:
