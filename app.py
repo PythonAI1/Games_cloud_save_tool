@@ -237,15 +237,26 @@ class GamesCloudSaveApp(QMainWindow):
         header_card = self._card()
         header_layout = QVBoxLayout(header_card)
         header_layout.setContentsMargins(18, 16, 18, 16)
-        header_layout.setSpacing(6)
+        header_layout.setSpacing(10)
 
         title = QLabel("游戏云存档")
+        title_row = QHBoxLayout()
+        title_row.setSpacing(12)
         title.setObjectName("TitleLabel")
+        self.hero_badge = QLabel("SYNC HUB")
+        self.hero_badge.setObjectName("HeroBadge")
+        self.hero_badge.setAlignment(Qt.AlignCenter)
+        title_row.addWidget(title, 1)
+        title_row.addWidget(self.hero_badge, 0, Qt.AlignTop)
         self.status_label = QLabel("需要修改仓库或目录时，可切到设置页。")
         self.status_label.setWordWrap(True)
-        self.status_label.setObjectName("SecondaryLabel")
-        header_layout.addWidget(title)
+        self.status_label.setObjectName("HeroStatusLabel")
+        self.hero_subtitle = QLabel("为不同游戏的云存档上传、下载和回滚提供统一的控制界面。")
+        self.hero_subtitle.setWordWrap(True)
+        self.hero_subtitle.setObjectName("SecondaryLabel")
+        header_layout.addLayout(title_row)
         header_layout.addWidget(self.status_label)
+        header_layout.addWidget(self.hero_subtitle)
 
         game_row = QHBoxLayout()
         game_row.setSpacing(10)
@@ -291,6 +302,19 @@ class GamesCloudSaveApp(QMainWindow):
 
         self.suggestion_label = None
 
+        mission_card = self._card()
+        mission_card.setObjectName("MissionCard")
+        mission_layout = QVBoxLayout(mission_card)
+        mission_layout.setContentsMargins(18, 18, 18, 18)
+        mission_layout.setSpacing(12)
+        overview_title = QLabel("云存档控制台")
+        overview_title.setObjectName("SectionTitleLabel")
+        overview_desc = QLabel("这里用于快速刷新本地和云端状态，并执行上传、下载、回滚操作；仅升级界面呈现，不改变现有同步逻辑。")
+        overview_desc.setWordWrap(True)
+        overview_desc.setObjectName("SecondaryLabel")
+        mission_layout.addWidget(overview_title)
+        mission_layout.addWidget(overview_desc)
+
         action_row = QHBoxLayout()
         action_row.setSpacing(12)
         self.refresh_all_button = QPushButton("刷新本地和云端信息")
@@ -302,9 +326,11 @@ class GamesCloudSaveApp(QMainWindow):
         action_row.addWidget(self.refresh_all_button)
         action_row.addWidget(self.upload_button)
         action_row.addWidget(self.download_button)
-        layout.addLayout(action_row)
+        mission_layout.addLayout(action_row)
+        layout.addWidget(mission_card)
 
         splitter = QSplitter(Qt.Horizontal)
+        splitter.setObjectName("OverviewSplitter")
         splitter.setChildrenCollapsible(False)
         splitter.addWidget(self._build_info_panel("本地存档信息", "local"))
         splitter.addWidget(self._build_info_panel("云端存档信息", "remote"))
@@ -314,6 +340,8 @@ class GamesCloudSaveApp(QMainWindow):
     def _build_info_panel(self, title: str, side: str) -> QWidget:
         box = self._section_group(title)
         inner = QVBoxLayout(box)
+        inner.setContentsMargins(16, 20, 16, 16)
+        inner.setSpacing(12)
         text = QPlainTextEdit()
         text.setReadOnly(True)
         text.setObjectName("InfoText")
@@ -506,62 +534,88 @@ class GamesCloudSaveApp(QMainWindow):
         base_style = (
             """
             QMainWindow, QWidget {
-                background: #edf3fa;
-                color: #17283b;
+                background: #07111f;
+                color: #dce8f6;
             }
             QWidget#Card, QGroupBox {
-                background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #ffffff, stop:1 #f7faff);
-                border: 1px solid #c9d8e8;
-                border-radius: 16px;
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 #102236, stop:0.55 #0c1b2d, stop:1 #081321);
+                border: 1px solid #204162;
+                border-radius: 18px;
             }
             QGroupBox {
                 margin-top: 14px;
-                padding-top: 10px;
+                padding-top: 12px;
                 font-weight: 700;
+                color: #eff7ff;
             }
             QGroupBox::title {
                 subcontrol-origin: margin;
                 left: 16px;
-                padding: 0 8px;
-                color: #173e63;
-                background: #edf3fa;
+                padding: 2px 10px;
+                color: #8fd9ff;
+                background: #07111f;
                 border-radius: 6px;
             }
             QLabel#TitleLabel {
-                font-size: 24px;
+                font-size: 28px;
                 font-weight: 700;
-                color: #102f4d;
+                color: #f3fbff;
             }
             QLabel#SecondaryLabel {
-                color: #617991;
+                color: #7ea0c5;
+            }
+            QLabel#HeroStatusLabel {
+                color: #d8e8f8;
+                font-size: 15px;
+                font-weight: 700;
+            }
+            QLabel#HeroBadge {
+                min-width: 118px;
+                min-height: 32px;
+                padding: 2px 12px;
+                border-radius: 16px;
+                color: #061321;
+                font-size: 12px;
+                font-weight: 800;
+                letter-spacing: 1px;
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #3ff2d0, stop:1 #5bb8ff);
+            }
+            QLabel#FieldLabel {
+                color: #8fd9ff;
+                font-weight: 700;
+            }
+            QLabel#SectionTitleLabel {
+                color: #effaff;
+                font-size: 18px;
+                font-weight: 800;
             }
             QLabel#SuggestionLabel {
-                color: #087f69;
+                color: #6af8ca;
                 font-size: 15px;
                 font-weight: 700;
             }
             QPushButton {
-                min-height: 42px;
-                border-radius: 12px;
-                border: 1px solid #b6cbe0;
-                background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #ffffff, stop:1 #edf4fb);
-                color: #183f63;
-                padding: 0 16px;
+                min-height: 44px;
+                border-radius: 14px;
+                border: 1px solid #29557c;
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 #14273d, stop:1 #0f1d30);
+                color: #d9ecff;
+                padding: 0 18px;
                 font-weight: 700;
             }
             QPushButton:hover {
-                color: #075f9c;
-                border-color: #65aee2;
-                background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #f9fdff, stop:1 #dcefff);
+                color: #ffffff;
+                border-color: #4ea9ff;
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 #1a3553, stop:1 #102743);
             }
             QPushButton:pressed {
-                background: #d5e9f8;
-                border-color: #398fc9;
+                background: #14304e;
+                border-color: #2a79bd;
             }
             QPushButton:disabled {
-                color: #9aaaba;
-                background: #e8eef4;
-                border-color: #d3dde7;
+                color: #708198;
+                background: #0c1724;
+                border-color: #182b40;
             }
             QPushButton[text="上传本地存档"] {
                 background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #087f69, stop:1 #16a085);
@@ -591,35 +645,37 @@ class GamesCloudSaveApp(QMainWindow):
                 border-color: #9d5905;
             }
             QLineEdit, QPlainTextEdit, QComboBox {
-                background: #fbfdff;
-                border: 1px solid #c4d4e5;
+                background: #081624;
+                border: 1px solid #214567;
                 border-radius: 12px;
                 padding: 10px 12px;
-                selection-background-color: #56a9dd;
+                color: #eaf6ff;
+                selection-background-color: #2d8fff;
                 selection-color: #ffffff;
             }
             QLineEdit:hover, QPlainTextEdit:hover, QComboBox:hover {
-                border-color: #83b8dc;
-                background: #ffffff;
+                border-color: #46a7ff;
+                background: #0b1c2d;
             }
             QLineEdit:focus, QPlainTextEdit:focus, QComboBox:focus {
-                border: 2px solid #268cc7;
-                background: #ffffff;
+                border: 2px solid #57d6ff;
+                background: #0d2034;
             }
             QComboBox::drop-down {
                 border: none;
                 width: 30px;
             }
             QComboBox#GameSelector {
-                border: 1px solid #9aa8b5;
-                border-radius: 2px;
-                background: #ffffff;
-                padding: 4px 8px;
+                min-height: 42px;
+                border: 1px solid #2b567f;
+                border-radius: 12px;
+                background: #081624;
+                padding: 6px 10px;
             }
             QComboBox#GameSelector::drop-down {
                 width: 32px;
-                background: #eef2f6;
-                border-left: 1px solid #9aa8b5;
+                background: #0f2438;
+                border-left: 1px solid #2b567f;
             }
             QComboBox#GameSelector::down-arrow {
                 image: url(COMBO_ARROW_PATH);
@@ -627,53 +683,53 @@ class GamesCloudSaveApp(QMainWindow):
                 height: 14px;
             }
             QComboBox#GameSelector:hover {
-                border-color: #268cc7;
-                background: #ffffff;
+                border-color: #57d6ff;
+                background: #0b1c2d;
             }
             QComboBox#GameSelector:hover::drop-down {
-                background: #e2edf6;
+                background: #16314b;
             }
             QComboBox#GameSelector QAbstractItemView {
-                background: #ffffff;
-                border: 1px solid #7f8c98;
-                selection-background-color: #0878d1;
+                background: #0b1c2d;
+                border: 1px solid #2d577d;
+                selection-background-color: #187bff;
                 selection-color: #ffffff;
             }
             QComboBox QAbstractItemView {
-                background: #ffffff;
-                color: #173e63;
-                border: 1px solid #9fc2dd;
-                selection-background-color: #d9effc;
-                selection-color: #0b4f7d;
+                background: #0b1c2d;
+                color: #d8ebff;
+                border: 1px solid #2d577d;
+                selection-background-color: #153e68;
+                selection-color: #ffffff;
             }
             QTabWidget::pane {
-                border: 1px solid #c9d8e8;
-                border-radius: 14px;
-                background: #f9fbfe;
+                border: 1px solid #1d3d5b;
+                border-radius: 16px;
+                background: #081320;
                 top: -1px;
             }
             QTabBar::tab {
-                background: #dfeaf5;
-                color: #526d86;
-                border: 1px solid #cad8e7;
-                border-top-left-radius: 10px;
-                border-top-right-radius: 10px;
-                padding: 10px 18px;
+                background: #0d1e31;
+                color: #7ea0c5;
+                border: 1px solid #1d3d5b;
+                border-top-left-radius: 12px;
+                border-top-right-radius: 12px;
+                padding: 11px 18px;
                 margin-right: 6px;
             }
             QTabBar::tab:hover {
-                background: #eaf5fd;
-                color: #17699f;
+                background: #122940;
+                color: #b9e8ff;
             }
             QTabBar::tab:selected {
-                background: #f9fbfe;
-                color: #0b5f94;
-                border-bottom-color: #f9fbfe;
+                background: #081320;
+                color: #5ee4ff;
+                border-bottom-color: #081320;
                 font-weight: 700;
             }
             QProgressBar {
-                background: #dce7f1;
-                border: 1px solid #c4d4e2;
+                background: #091624;
+                border: 1px solid #1b3c5e;
                 border-radius: 8px;
                 min-height: 16px;
                 text-align: center;
@@ -681,21 +737,21 @@ class GamesCloudSaveApp(QMainWindow):
             }
             QProgressBar::chunk {
                 border-radius: 8px;
-                background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #08a88a, stop:0.5 #279ed4, stop:1 #3568d4);
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #08d0a7, stop:0.5 #2f97ff, stop:1 #7d5cff);
             }
             QScrollBar:vertical {
-                background: #edf3f8;
+                background: #091624;
                 width: 11px;
                 margin: 2px;
                 border-radius: 5px;
             }
             QScrollBar::handle:vertical {
-                background: #a8bfd3;
+                background: #29557c;
                 min-height: 28px;
                 border-radius: 5px;
             }
             QScrollBar::handle:vertical:hover {
-                background: #6fa6c9;
+                background: #4faeff;
             }
             QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {
                 height: 0;
@@ -704,17 +760,33 @@ class GamesCloudSaveApp(QMainWindow):
                 background: transparent;
                 height: 10px;
             }
+            QPlainTextEdit#InfoText {
+                background: #06111d;
+                border: 1px solid #1d3d5b;
+                color: #dce8f6;
+                padding: 12px;
+            }
+            QWidget#MissionCard {
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 #153251, stop:0.55 #0e2238, stop:1 #0b1625);
+                border: 1px solid #3476ab;
+            }
             """
         ).replace("COMBO_ARROW_PATH", combo_arrow_path)
         compact_style = """
             QLabel#TitleLabel {
-                font-size: 18px;
+                font-size: 20px;
+            }
+            QLabel#HeroStatusLabel {
+                font-size: 12px;
+            }
+            QLabel#SectionTitleLabel {
+                font-size: 14px;
             }
             QLabel#SuggestionLabel {
                 font-size: 11px;
             }
             QPushButton {
-                min-height: 28px;
+                min-height: 30px;
                 border-radius: 8px;
                 padding: 0 8px;
             }
