@@ -155,11 +155,17 @@ class GamesCloudSaveApp(QMainWindow):
         if screen is not None:
             available = screen.availableGeometry()
             dpi_scale = max(screen.logicalDotsPerInch() / 96.0, screen.devicePixelRatio())
+            self.ui_scale_factor = dpi_scale
             self.compact_dpi_layout = dpi_scale >= 1.25 or available.width() < 1500 or available.height() < 1000
+            self.ultra_compact_dpi_layout = dpi_scale >= 1.5 or available.width() < 1360 or available.height() < 900
             self.resize(min(1550, int(available.width() * 0.94)), min(1200, int(available.height() * 0.94)))
-            self.setMinimumSize(min(1120, int(available.width() * 0.85)), min(820, int(available.height() * 0.85)))
+            min_width = 980 if self.ultra_compact_dpi_layout else 1120
+            min_height = 700 if self.ultra_compact_dpi_layout else 820
+            self.setMinimumSize(min(min_width, int(available.width() * 0.72)), min(min_height, int(available.height() * 0.72)))
         else:
+            self.ui_scale_factor = 1.0
             self.compact_dpi_layout = False
+            self.ultra_compact_dpi_layout = False
             self.resize(1550, 1200)
             self.setMinimumSize(1120, 820)
 
@@ -231,13 +237,17 @@ class GamesCloudSaveApp(QMainWindow):
         self.setCentralWidget(central)
 
         root_layout = QVBoxLayout(central)
-        root_layout.setContentsMargins(18, 18, 18, 18)
-        root_layout.setSpacing(14)
+        root_margin = 8 if self.ultra_compact_dpi_layout else 18
+        root_spacing = 8 if self.ultra_compact_dpi_layout else 14
+        root_layout.setContentsMargins(root_margin, root_margin, root_margin, root_margin)
+        root_layout.setSpacing(root_spacing)
 
         header_card = self._card()
         header_layout = QVBoxLayout(header_card)
-        header_layout.setContentsMargins(18, 16, 18, 16)
-        header_layout.setSpacing(6)
+        header_margin_h = 10 if self.ultra_compact_dpi_layout else 18
+        header_margin_v = 10 if self.ultra_compact_dpi_layout else 16
+        header_layout.setContentsMargins(header_margin_h, header_margin_v, header_margin_h, header_margin_v)
+        header_layout.setSpacing(4 if self.ultra_compact_dpi_layout else 6)
 
         title = QLabel("游戏云存档")
         title.setObjectName("TitleLabel")
@@ -338,14 +348,16 @@ class GamesCloudSaveApp(QMainWindow):
         remote_zip_path: str,
     ) -> None:
         outer = QVBoxLayout(self.settings_tab)
-        outer.setContentsMargins(8, 8, 8, 8)
-        outer.setSpacing(14)
+        page_margin = 4 if self.ultra_compact_dpi_layout else 8
+        page_spacing = 8 if self.ultra_compact_dpi_layout else 14
+        outer.setContentsMargins(page_margin, page_margin, page_margin, page_margin)
+        outer.setSpacing(page_spacing)
 
         card = self._card()
         outer.addWidget(card)
         grid = QGridLayout(card)
-        spacing = 8 if self.compact_dpi_layout else 12
-        margin = 12 if self.compact_dpi_layout else 18
+        spacing = 6 if self.ultra_compact_dpi_layout else (8 if self.compact_dpi_layout else 12)
+        margin = 8 if self.ultra_compact_dpi_layout else (12 if self.compact_dpi_layout else 18)
         grid.setContentsMargins(margin, margin, margin, margin)
         grid.setHorizontalSpacing(spacing)
         grid.setVerticalSpacing(spacing)
@@ -432,7 +444,7 @@ class GamesCloudSaveApp(QMainWindow):
         layout.addWidget(QLabel(label), row, 0)
         layout.addWidget(widget, row, 1)
 
-        stack_buttons = self.compact_dpi_layout and bool(hint)
+        stack_buttons = self.compact_dpi_layout
         right = QVBoxLayout() if stack_buttons else QHBoxLayout()
         right.setSpacing(6)
         if hint:
@@ -459,14 +471,16 @@ class GamesCloudSaveApp(QMainWindow):
 
     def _build_launcher_tab(self) -> None:
         layout = QVBoxLayout(self.launcher_tab)
-        layout.setContentsMargins(8, 8, 8, 8)
-        layout.setSpacing(14)
+        page_margin = 4 if self.ultra_compact_dpi_layout else 8
+        page_spacing = 8 if self.ultra_compact_dpi_layout else 14
+        layout.setContentsMargins(page_margin, page_margin, page_margin, page_margin)
+        layout.setSpacing(page_spacing)
 
         card = self._card()
         layout.addWidget(card)
         grid = QGridLayout(card)
-        spacing = 8 if self.compact_dpi_layout else 12
-        margin = 12 if self.compact_dpi_layout else 18
+        spacing = 6 if self.ultra_compact_dpi_layout else (8 if self.compact_dpi_layout else 12)
+        margin = 8 if self.ultra_compact_dpi_layout else (12 if self.compact_dpi_layout else 18)
         grid.setContentsMargins(margin, margin, margin, margin)
         grid.setHorizontalSpacing(spacing)
         grid.setVerticalSpacing(spacing)
@@ -500,7 +514,7 @@ class GamesCloudSaveApp(QMainWindow):
         self.log_text.hide()
 
     def _apply_styles(self) -> None:
-        font = QFont("Microsoft YaHei UI", 8 if self.compact_dpi_layout else 10)
+        font = QFont("Microsoft YaHei UI", 7 if self.ultra_compact_dpi_layout else (8 if self.compact_dpi_layout else 10))
         QApplication.instance().setFont(font)
         combo_arrow_path = (self.resource_dir / "assets" / "combo_down_arrow.png").as_posix()
         base_style = (
@@ -708,25 +722,36 @@ class GamesCloudSaveApp(QMainWindow):
         ).replace("COMBO_ARROW_PATH", combo_arrow_path)
         compact_style = """
             QLabel#TitleLabel {
-                font-size: 18px;
+                font-size: TITLE_SIZEpx;
             }
             QLabel#SuggestionLabel {
-                font-size: 11px;
+                font-size: SUGGESTION_SIZEpx;
             }
             QPushButton {
-                min-height: 28px;
+                min-height: BUTTON_HEIGHTpx;
                 border-radius: 8px;
-                padding: 0 8px;
+                padding: 0 BUTTON_PADDINGpx;
             }
             QLineEdit, QPlainTextEdit, QComboBox {
                 border-radius: 8px;
-                padding: 4px 7px;
+                padding: FIELD_PADDING_Ypx FIELD_PADDING_Xpx;
             }
             QTabBar::tab {
-                padding: 5px 10px;
+                padding: TAB_PADDING_Ypx TAB_PADDING_Xpx;
                 margin-right: 3px;
             }
         """
+        compact_style = (
+            compact_style
+            .replace("TITLE_SIZE", "16" if self.ultra_compact_dpi_layout else "18")
+            .replace("SUGGESTION_SIZE", "10" if self.ultra_compact_dpi_layout else "11")
+            .replace("BUTTON_HEIGHT", "24" if self.ultra_compact_dpi_layout else "28")
+            .replace("BUTTON_PADDING", "6" if self.ultra_compact_dpi_layout else "8")
+            .replace("FIELD_PADDING_Y", "3" if self.ultra_compact_dpi_layout else "4")
+            .replace("FIELD_PADDING_X", "6" if self.ultra_compact_dpi_layout else "7")
+            .replace("TAB_PADDING_Y", "4" if self.ultra_compact_dpi_layout else "5")
+            .replace("TAB_PADDING_X", "8" if self.ultra_compact_dpi_layout else "10")
+        )
         self.setStyleSheet(base_style + (compact_style if self.compact_dpi_layout else ""))
 
     def _card(self) -> QFrame:
