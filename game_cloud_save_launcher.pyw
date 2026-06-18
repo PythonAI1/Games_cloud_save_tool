@@ -6,7 +6,9 @@ import time
 from pathlib import Path
 
 from PyQt5.QtCore import QObject, Qt, QThread, QTimer, pyqtSignal
+from PyQt5.QtGui import QIcon
 from PyQt5.QtWidgets import (
+    QAction,
     QApplication,
     QComboBox,
     QDialog,
@@ -17,6 +19,8 @@ from PyQt5.QtWidgets import (
     QMessageBox,
     QProgressBar,
     QPushButton,
+    QMenu,
+    QSystemTrayIcon,
     QVBoxLayout,
 )
 
@@ -201,6 +205,59 @@ def resolve_config_path() -> Path:
     return resolve_data_dir() / CONFIG_FILE_NAME
 
 
+class LauncherTrayController(QObject):
+    def __init__(self, app: QApplication, icon: QIcon) -> None:
+        super().__init__(app)
+        self.phase = "idle"
+        self.exit_requested = False
+        self.menu = QMenu()
+        self.exit_action = QAction("退出启动器", self.menu)
+        self.exit_action.triggered.connect(self.request_exit)
+        self.menu.addAction(self.exit_action)
+        self.tray_icon: QSystemTrayIcon | None = None
+
+        if QSystemTrayIcon.isSystemTrayAvailable():
+            self.tray_icon = QSystemTrayIcon(icon, app)
+            self.tray_icon.setToolTip("游戏云存档启动器")
+            self.tray_icon.setContextMenu(self.menu)
+            self.tray_icon.show()
+
+    def set_phase(self, phase: str) -> None:
+        self.phase = phase
+
+    def request_exit(self) -> None:
+        if self.phase == "syncing":
+            QMessageBox.information(None, "暂时无法退出", "当前正在同步存档，请等待操作完成后再退出启动器。")
+            return
+
+        if self.phase == "monitoring":
+            result = QMessageBox.question(
+                None,
+                "退出启动器",
+                "退出后将停止监控，游戏关闭后不会自动上传存档。\n\n是否退出启动器？",
+                QMessageBox.Yes | QMessageBox.No,
+                QMessageBox.No,
+            )
+            if result != QMessageBox.Yes:
+                return
+
+        self.exit_requested = True
+        for widget in QApplication.topLevelWidgets():
+            if widget.isVisible():
+                widget.close()
+
+    def close(self) -> None:
+        if self.tray_icon is not None:
+            self.tray_icon.hide()
+
+
+launcher_tray: LauncherTrayController | None = None
+
+
+def launcher_exit_requested() -> bool:
+    return bool(launcher_tray and launcher_tray.exit_requested)
+
+
 def load_saved_config_with_legacy_fallback() -> dict:
     config_path = resolve_config_path()
     saved = load_config(config_path)
@@ -365,17 +422,21 @@ def show_error_message(title: str, message: str) -> None:
 
 
 def show_timed_info(title: str, message: str, milliseconds: int = 2000) -> None:
+    if launcher_exit_requested():
+        return
     box = QMessageBox(QMessageBox.Information, title, message, QMessageBox.NoButton)
     QTimer.singleShot(milliseconds, box.accept)
     box.exec_()
 
 
 def ask_retry_or_skip(title: str, message: str) -> bool:
+    if launcher_exit_requested():
+        return False
     box = QMessageBox(QMessageBox.Warning, title, f"{message}\n\n请检查网络后重试。", QMessageBox.NoButton)
     retry_button = box.addButton("重试", QMessageBox.AcceptRole)
     box.addButton("跳过", QMessageBox.RejectRole)
     box.exec_()
-    return box.clickedButton() is retry_button
+    return not launcher_exit_requested() and box.clickedButton() is retry_button
 
 
 def select_game_for_launch(config_data: dict, fixed_game_id: str | None = None) -> dict | None:
@@ -811,14 +872,20 @@ def run_worker_dialog(worker: QObject, title: str, initial_status: str) -> tuple
     thread.finished.connect(worker.deleteLater)
     thread.finished.connect(thread.deleteLater)
 
-    thread.start()
-    dialog.exec_()
+    if launcher_tray is not None:
+        launcher_tray.set_phase("syncing")
+    try:
+        thread.start()
+        dialog.exec_()
 
-    if thread.isRunning():
-        thread.quit()
-        thread.wait()
+        if thread.isRunning():
+            thread.quit()
+            thread.wait()
 
-    return result_holder["ok"], result_holder["payload"]
+        return result_holder["ok"], result_holder["payload"]
+    finally:
+        if launcher_tray is not None:
+            launcher_tray.set_phase("idle")
 
 
 def launch_configured_program(game: dict) -> subprocess.Popen:
@@ -890,14 +957,29 @@ def _find_target_window(target_window: dict) -> int:
 
 def wait_for_target_window(game: dict, target_window: dict) -> int:
     dialog = TargetWindowWaitDialog(game, target_window)
-    if dialog.exec_() != QDialog.Accepted:
-        return 0
-    return dialog.hwnd
+    if launcher_tray is not None:
+        launcher_tray.set_phase("waiting")
+    try:
+        if dialog.exec_() != QDialog.Accepted:
+            return 0
+        return dialog.hwnd
+    finally:
+        if launcher_tray is not None:
+            launcher_tray.set_phase("idle")
 
 
-def wait_for_window_close(hwnd: int) -> None:
-    while user32.IsWindow(hwnd):
-        pump_ui()
+def wait_for_window_close(hwnd: int) -> bool:
+    if launcher_tray is not None:
+        launcher_tray.set_phase("monitoring")
+    try:
+        while user32.IsWindow(hwnd):
+            if launcher_exit_requested():
+                return False
+            pump_ui()
+        return not launcher_exit_requested()
+    finally:
+        if launcher_tray is not None:
+            launcher_tray.set_phase("idle")
 
 
 def run_metadata_dialog(config_data: dict, game: dict) -> tuple[bool, dict | str]:
@@ -927,19 +1009,29 @@ def run_metadata_dialog(config_data: dict, game: dict) -> tuple[bool, dict | str
     worker.failed.connect(thread.quit)
     thread.finished.connect(worker.deleteLater)
     thread.finished.connect(thread.deleteLater)
-    thread.start()
-    dialog.exec_()
+    if launcher_tray is not None:
+        launcher_tray.set_phase("syncing")
+    try:
+        thread.start()
+        dialog.exec_()
 
-    if thread.isRunning():
-        thread.quit()
-        thread.wait()
+        if thread.isRunning():
+            thread.quit()
+            thread.wait()
 
-    return bool(result_holder["ok"]), result_holder["result"]
+        return bool(result_holder["ok"]), result_holder["result"]
+    finally:
+        if launcher_tray is not None:
+            launcher_tray.set_phase("idle")
 
 
 def fetch_remote_info_with_retry(config_data: dict, game: dict) -> tuple[dict | None, bool]:
     while True:
+        if launcher_exit_requested():
+            return None, False
         ok, result = run_metadata_dialog(config_data, game)
+        if launcher_exit_requested():
+            return None, False
         if ok and isinstance(result, dict):
             return result, True
         if ask_retry_or_skip("云端信息读取失败", str(result)):
@@ -950,8 +1042,12 @@ def fetch_remote_info_with_retry(config_data: dict, game: dict) -> tuple[dict | 
 
 def run_download_with_retry(config_data: dict, game: dict) -> bool:
     while True:
+        if launcher_exit_requested():
+            return False
         worker = DownloadWorker(config_data, game["id"])
         ok, payload = run_worker_dialog(worker, "下载进度", "准备下载云端存档...")
+        if launcher_exit_requested():
+            return False
         if ok and isinstance(payload, tuple) and len(payload) >= 1:
             show_timed_info("下载成功", str(payload[0]), 2000)
             return True
@@ -964,8 +1060,12 @@ def run_download_with_retry(config_data: dict, game: dict) -> bool:
 def run_upload_with_retry(config_data: dict, game: dict) -> bool:
     archive_result: dict | None = None
     while archive_result is None:
+        if launcher_exit_requested():
+            return False
         worker = ArchiveUploadWorker(config_data, game["id"])
         ok, payload = run_worker_dialog(worker, "上传进度", "准备上传本地存档...")
+        if launcher_exit_requested():
+            return False
         if ok and isinstance(payload, dict):
             archive_result = payload
             break
@@ -974,6 +1074,8 @@ def run_upload_with_retry(config_data: dict, game: dict) -> bool:
             return False
 
     while True:
+        if launcher_exit_requested():
+            return False
         metadata = dict(archive_result["metadata"])
         worker = MetadataUpdateWorker(
             config_data,
@@ -982,6 +1084,8 @@ def run_upload_with_retry(config_data: dict, game: dict) -> bool:
             archive_result.get("upload_speed"),
         )
         ok, payload = run_worker_dialog(worker, "同步进度", "正在更新云端信息...")
+        if launcher_exit_requested():
+            return False
         if ok and isinstance(payload, dict):
             show_timed_info("上传成功", str(payload["message"]), 2000)
             return True
@@ -996,6 +1100,8 @@ def run_upload_with_retry(config_data: dict, game: dict) -> bool:
 
 
 def confirm_risky_upload() -> bool:
+    if launcher_exit_requested():
+        return False
     result = QMessageBox.warning(
         None,
         "上传风险确认",
@@ -1009,6 +1115,8 @@ def confirm_risky_upload() -> bool:
 
 
 def prepare_startup_sync(config_data: dict, game: dict) -> bool:
+    if launcher_exit_requested():
+        return False
     remote_info, metadata_ok = fetch_remote_info_with_retry(config_data, game)
     if not metadata_ok:
         return False
@@ -1036,7 +1144,7 @@ def prepare_startup_sync(config_data: dict, game: dict) -> bool:
 
 def launch_monitor_then_sync(config_data: dict, fixed_game_id: str | None = None) -> int:
     launch_game = select_game_for_launch(config_data, fixed_game_id)
-    if launch_game is None:
+    if launch_game is None or launcher_exit_requested():
         return 0
 
     target_window = normalize_target_window(launch_game.get("target_window"))
@@ -1047,19 +1155,28 @@ def launch_monitor_then_sync(config_data: dict, fixed_game_id: str | None = None
         )
 
     startup_sync_safe = prepare_startup_sync(config_data, launch_game)
+    if launcher_exit_requested():
+        return 0
 
     save_dir = Path(str(launch_game.get("save_path", "")).strip())
     baseline_snapshot = snapshot_save_directory(save_dir)
+    if launcher_exit_requested():
+        return 0
 
     launch_configured_program(launch_game)
 
     hwnd = wait_for_target_window(launch_game, target_window)
+    if launcher_exit_requested():
+        return 0
     if not hwnd:
         show_timed_info("已取消", "已取消目标窗口监控。", 2000)
         return 0
-    wait_for_window_close(hwnd)
+    if not wait_for_window_close(hwnd):
+        return 0
 
     current_snapshot = snapshot_save_directory(save_dir)
+    if launcher_exit_requested():
+        return 0
     if current_snapshot == baseline_snapshot:
         show_timed_info("跳过上传", "存档未变化，跳过上传。", 2000)
         return 0
@@ -1081,15 +1198,25 @@ def bound_game_id_from_args(args: list[str]) -> str | None:
 
 
 def main() -> int:
+    global launcher_tray
     app = QApplication(sys.argv)
     app.setStyleSheet(LAUNCHER_STYLE)
+    resource_dir = Path(getattr(sys, "_MEIPASS", resolve_app_dir()))
+    icon_path = resource_dir / "assets" / "game_cloud_save.ico"
+    icon = QIcon(str(icon_path)) if icon_path.is_file() else QIcon()
+    app.setWindowIcon(icon)
+    launcher_tray = LauncherTrayController(app, icon)
     try:
         config_data = normalize_config(load_saved_config_with_legacy_fallback())
         result = launch_monitor_then_sync(config_data, bound_game_id_from_args(sys.argv[1:]))
     except Exception as exc:
-        show_error_message("启动失败", str(exc))
+        if not launcher_exit_requested():
+            show_error_message("启动失败", str(exc))
         result = 1
-    app.quit()
+    finally:
+        launcher_tray.close()
+        launcher_tray = None
+        app.quit()
     return result
 
 
