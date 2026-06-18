@@ -901,7 +901,7 @@ def wait_for_window_close(hwnd: int) -> None:
 
 
 def run_metadata_dialog(config_data: dict, game: dict) -> tuple[bool, dict | str]:
-    dialog = ProgressDialog("读取云端信息", "正在读取云端 Metadata...")
+    dialog = ProgressDialog("读取云端信息", "正在读取云端信息...")
     dialog.progress_bar.setRange(0, 0)
     dialog.percent_label.setText("")
     thread = QThread()
@@ -965,7 +965,7 @@ def run_upload_with_retry(config_data: dict, game: dict) -> bool:
     archive_result: dict | None = None
     while archive_result is None:
         worker = ArchiveUploadWorker(config_data, game["id"])
-        ok, payload = run_worker_dialog(worker, "上传进度", "准备上传本地存档到 GitHub...")
+        ok, payload = run_worker_dialog(worker, "上传进度", "准备上传本地存档...")
         if ok and isinstance(payload, dict):
             archive_result = payload
             break
@@ -981,7 +981,7 @@ def run_upload_with_retry(config_data: dict, game: dict) -> bool:
             metadata,
             archive_result.get("upload_speed"),
         )
-        ok, payload = run_worker_dialog(worker, "同步进度", "正在更新云端 Metadata...")
+        ok, payload = run_worker_dialog(worker, "同步进度", "正在更新云端信息...")
         if ok and isinstance(payload, dict):
             show_timed_info("上传成功", str(payload["message"]), 2000)
             return True
@@ -999,7 +999,7 @@ def confirm_risky_upload() -> bool:
     result = QMessageBox.warning(
         None,
         "上传风险确认",
-        "启动前本应下载云端存档，但本次已跳过或下载失败。\n\n"
+        "启动前应下载云端存档，但本次未完成。\n\n"
         "当前本地存档可能不是最新版本，继续上传可能覆盖云端较新的存档。\n\n"
         "是否仍要继续上传？",
         QMessageBox.Yes | QMessageBox.No,
@@ -1028,7 +1028,7 @@ def prepare_startup_sync(config_data: dict, game: dict) -> bool:
     remote_zip_sha256 = str(remote_info.get("zip_sha256", "")).strip()
     local_downloaded_zip_sha256 = str(game.get("last_downloaded_zip_sha256", "")).strip()
     if remote_zip_sha256 and local_downloaded_zip_sha256 and remote_zip_sha256 == local_downloaded_zip_sha256:
-        show_timed_info("跳过下载", "本地已是同一份云端存档，跳过重复下载。", 2000)
+        show_timed_info("跳过下载", "本地与云端存档一致，跳过下载。", 2000)
         return True
 
     return run_download_with_retry(config_data, game)

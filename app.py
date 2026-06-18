@@ -399,7 +399,7 @@ class GamesCloudSaveApp(QMainWindow):
         self.target_window_label = QLabel("")
         self.target_window_label.setWordWrap(True)
         self.target_window_label.setObjectName("SecondaryLabel")
-        self.capture_window_button = QPushButton("记录目标窗口")
+        self.capture_window_button = QPushButton("选择目标窗口")
         self.capture_window_button.clicked.connect(self.start_target_window_capture)
 
         self._add_labeled_entry(grid, 1, "GitHub Token", self.token_edit)
