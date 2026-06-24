@@ -694,8 +694,7 @@ class TargetWindowWaitDialog(QDialog):
 
         status_label = QLabel(
             f"正在等待目标游戏窗口……\n\n当前游戏：{game['name']}\n"
-            f"目标进程：{target_window['process_name']}\n"
-            f"目标窗口类名：{target_window['class_name']}"
+            f"目标进程：{target_window['process_name']}"
         )
         status_label.setWordWrap(True)
         panel_layout.addWidget(status_label)
