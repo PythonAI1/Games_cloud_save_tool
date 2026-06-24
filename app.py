@@ -817,9 +817,6 @@ class GamesCloudSaveApp(QMainWindow):
     def _remote_zip_path(self) -> str:
         return remote_zip_path_from_input(self.remote_zip_path_edit.text())
 
-    def _download_mode(self) -> str:
-        return "overwrite"
-
     def _normalize_config(self, saved: dict) -> dict:
         token = str(saved.get("token", ""))
         repo = str(saved.get("repo", ""))
@@ -848,8 +845,6 @@ class GamesCloudSaveApp(QMainWindow):
                         "remote_zip_path": remote_zip_path,
                         "emulator_path": str(item.get("emulator_path", "")),
                         "target_window": self._normalize_target_window(item.get("target_window")),
-                        "download_mode": "overwrite",
-                        "backup_before_overwrite": True,
                         "pending_restore": pending_restore,
                         "last_uploaded_at": last_uploaded_at,
                         "last_downloaded_zip_sha256": last_downloaded_zip_sha256,
@@ -870,8 +865,6 @@ class GamesCloudSaveApp(QMainWindow):
                     "remote_zip_path": legacy_remote,
                     "emulator_path": "",
                     "target_window": None,
-                    "download_mode": "overwrite",
-                    "backup_before_overwrite": True,
                     "pending_restore": legacy_pending,
                     "last_uploaded_at": "",
                     "last_downloaded_zip_sha256": "",
@@ -917,8 +910,6 @@ class GamesCloudSaveApp(QMainWindow):
         game["game_root_path"] = self._game_root()
         game["save_path"] = self._save_path()
         game["remote_zip_path"] = self._remote_zip_path()
-        game["download_mode"] = "overwrite"
-        game["backup_before_overwrite"] = True
         game["pending_restore"] = self.pending_restore_state
         if previous_save_path != game["save_path"] or previous_remote_zip_path != game["remote_zip_path"]:
             game["last_downloaded_zip_sha256"] = ""
@@ -975,8 +966,6 @@ class GamesCloudSaveApp(QMainWindow):
                 "remote_zip_path": "",
                 "emulator_path": "",
                 "target_window": None,
-                "download_mode": "overwrite",
-                "backup_before_overwrite": True,
                 "pending_restore": None,
                 "last_uploaded_at": "",
                 "last_downloaded_zip_sha256": "",

@@ -291,8 +291,6 @@ def build_default_config() -> dict:
                 "remote_zip_path": "",
                 "emulator_path": "",
                 "target_window": None,
-                "download_mode": "overwrite",
-                "backup_before_overwrite": True,
                 "pending_restore": None,
                 "detect_type": "manual",
                 "last_uploaded_at": "",
@@ -354,10 +352,6 @@ def normalize_config(saved: dict) -> dict:
                     "remote_zip_path": remote_zip_path_from_input(str(item.get("remote_zip_path", ""))),
                     "emulator_path": str(item.get("emulator_path", "")),
                     "target_window": normalize_target_window(item.get("target_window")),
-                    "download_mode": str(item.get("download_mode", "overwrite"))
-                    if str(item.get("download_mode", "overwrite")) in {"overwrite", "new_folder"}
-                    else "overwrite",
-                    "backup_before_overwrite": bool(item.get("backup_before_overwrite", True)),
                     "pending_restore": normalize_pending_restore_state(item.get("pending_restore")),
                     "detect_type": str(item.get("detect_type", "manual")),
                     "last_uploaded_at": str(item.get("last_uploaded_at", "")),

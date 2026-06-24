@@ -1,5 +1,5 @@
 {
-  "token": "",
+  "token_protected": "",
   "repo": "yourname/your-repo",
   "branch": "main",
   "device_name": "MyDevice",
@@ -12,8 +12,6 @@
       "remote_zip_path": "",
       "emulator_path": "",
       "target_window": null,
-      "download_mode": "overwrite",
-      "backup_before_overwrite": true,
       "pending_restore": null,
       "last_uploaded_at": "",
       "last_downloaded_zip_sha256": ""
