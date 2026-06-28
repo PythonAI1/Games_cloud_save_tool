@@ -249,6 +249,11 @@ class LauncherTrayController(QObject):
     def close(self) -> None:
         if self.tray_icon is not None:
             self.tray_icon.hide()
+            self.tray_icon.setContextMenu(None)
+            self.tray_icon.deleteLater()
+            self.tray_icon = None
+        self.menu.clear()
+        self.menu.deleteLater()
 
 
 launcher_tray: LauncherTrayController | None = None
@@ -1211,9 +1216,14 @@ def main() -> int:
             show_error_message("启动失败", str(exc))
         result = 1
     finally:
-        launcher_tray.close()
+        if launcher_tray is not None:
+            launcher_tray.close()
         launcher_tray = None
+        for widget in QApplication.topLevelWidgets():
+            widget.close()
+        app.processEvents()
         app.quit()
+        app.processEvents()
     return result
 
 

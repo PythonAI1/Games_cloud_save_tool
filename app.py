@@ -77,6 +77,33 @@ kernel32.CloseHandle.argtypes = [ctypes.c_void_p]
 GW_OWNER = 4
 
 
+def calculate_main_window_metrics(available_width: int, available_height: int, dpi_scale: float) -> dict[str, int | bool]:
+    compact = dpi_scale >= 1.25 or available_width < 1500 or available_height < 1000
+    ultra_compact = dpi_scale >= 1.5 or available_width < 1360 or available_height < 900
+
+    target_width = 980 if ultra_compact else (1060 if compact else 1120)
+    target_height = 640 if ultra_compact else (680 if compact else 720)
+    width_limit_ratio = 0.92 if available_width < 1200 else 0.85
+    height_limit_ratio = 0.90 if available_height < 700 else 0.85
+
+    default_width = min(target_width, max(640, int(available_width * width_limit_ratio)))
+    default_height = min(target_height, max(430, int(available_height * height_limit_ratio)))
+
+    min_width_target = 760 if ultra_compact else (860 if compact else 920)
+    min_height_target = 440 if ultra_compact else (500 if compact else 540)
+    min_width = min(min_width_target, default_width)
+    min_height = min(min_height_target, default_height)
+
+    return {
+        "compact": compact,
+        "ultra_compact": ultra_compact,
+        "default_width": default_width,
+        "default_height": default_height,
+        "min_width": min_width,
+        "min_height": min_height,
+    }
+
+
 class TargetWindowSelectionDialog(QDialog):
     def __init__(self, parent: QWidget | None, window_items: list[dict]) -> None:
         super().__init__(parent)
@@ -156,18 +183,17 @@ class GamesCloudSaveApp(QMainWindow):
             available = screen.availableGeometry()
             dpi_scale = max(screen.logicalDotsPerInch() / 96.0, screen.devicePixelRatio())
             self.ui_scale_factor = dpi_scale
-            self.compact_dpi_layout = dpi_scale >= 1.25 or available.width() < 1500 or available.height() < 1000
-            self.ultra_compact_dpi_layout = dpi_scale >= 1.5 or available.width() < 1360 or available.height() < 900
-            self.resize(min(1550, int(available.width() * 0.94)), min(1200, int(available.height() * 0.94)))
-            min_width = 980 if self.ultra_compact_dpi_layout else 1120
-            min_height = 700 if self.ultra_compact_dpi_layout else 820
-            self.setMinimumSize(min(min_width, int(available.width() * 0.72)), min(min_height, int(available.height() * 0.72)))
+            metrics = calculate_main_window_metrics(available.width(), available.height(), dpi_scale)
+            self.compact_dpi_layout = bool(metrics["compact"])
+            self.ultra_compact_dpi_layout = bool(metrics["ultra_compact"])
+            self.resize(int(metrics["default_width"]), int(metrics["default_height"]))
+            self.setMinimumSize(int(metrics["min_width"]), int(metrics["min_height"]))
         else:
             self.ui_scale_factor = 1.0
             self.compact_dpi_layout = False
             self.ultra_compact_dpi_layout = False
-            self.resize(1550, 1200)
-            self.setMinimumSize(1120, 820)
+            self.resize(1120, 720)
+            self.setMinimumSize(920, 540)
 
         self.app_dir = self._resolve_app_dir()
         self.resource_dir = Path(getattr(sys, "_MEIPASS", self.app_dir))
@@ -315,6 +341,8 @@ class GamesCloudSaveApp(QMainWindow):
         splitter.addWidget(self._build_info_panel("本地存档信息", "local"))
         splitter.addWidget(self._build_info_panel("云端存档信息", "remote"))
         splitter.setSizes([520, 520])
+        splitter.setStretchFactor(0, 1)
+        splitter.setStretchFactor(1, 1)
         layout.addWidget(splitter, 1)
 
     def _build_info_panel(self, title: str, side: str) -> QWidget:
@@ -323,6 +351,8 @@ class GamesCloudSaveApp(QMainWindow):
         text = QPlainTextEdit()
         text.setReadOnly(True)
         text.setObjectName("InfoText")
+        text.setMinimumHeight(140 if self.ultra_compact_dpi_layout else 180)
+        text.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         if side == "local":
             self.local_text = text
             self.rollback_backup_button = QPushButton("回滚存档")
@@ -770,7 +800,7 @@ class GamesCloudSaveApp(QMainWindow):
 
     def _section_group(self, title: str) -> QGroupBox:
         box = QGroupBox(title)
-        box.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
+        box.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         return box
 
     def closeEvent(self, event) -> None:
