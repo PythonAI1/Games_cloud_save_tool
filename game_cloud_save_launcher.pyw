@@ -33,7 +33,7 @@ from cloud_sync_service import (
 )
 from constants import APP_DATA_DIR_NAME, CONFIG_FILE_NAME
 from save_manager import snapshot_save_directory
-from utils import default_device_name, now_text, parse_transfer_status, remote_zip_path_from_input
+from utils import default_device_name, now_text, parse_transfer_status, remote_zip_path_from_game_name, remote_zip_path_from_input
 
 
 WINDOW_POLL_INTERVAL = 0.5
@@ -288,7 +288,7 @@ def build_default_config() -> dict:
                 "name": "Game1",
                 "game_root_path": "",
                 "save_path": "",
-                "remote_zip_path": "",
+                "remote_zip_path": remote_zip_path_from_game_name("Game1"),
                 "emulator_path": "",
                 "target_window": None,
                 "pending_restore": None,
@@ -343,13 +343,17 @@ def normalize_config(saved: dict) -> dict:
             if not isinstance(item, dict):
                 continue
             game_id = str(item.get("id") or f"game_{index}")
+            game_name = str(item.get("name") or f"Game{index}")
+            remote_zip_path = remote_zip_path_from_input(str(item.get("remote_zip_path", "")))
+            if not remote_zip_path:
+                remote_zip_path = remote_zip_path_from_game_name(game_name)
             games.append(
                 {
                     "id": game_id,
-                    "name": str(item.get("name") or f"Game{index}"),
+                    "name": game_name,
                     "game_root_path": str(item.get("game_root_path", "")),
                     "save_path": str(item.get("save_path", "")),
-                    "remote_zip_path": remote_zip_path_from_input(str(item.get("remote_zip_path", ""))),
+                    "remote_zip_path": remote_zip_path,
                     "emulator_path": str(item.get("emulator_path", "")),
                     "target_window": normalize_target_window(item.get("target_window")),
                     "pending_restore": normalize_pending_restore_state(item.get("pending_restore")),
@@ -369,7 +373,7 @@ def normalize_config(saved: dict) -> dict:
     return {
         "token": str(saved.get("token", "")),
         "repo": str(saved.get("repo", "")),
-        "branch": str(saved.get("branch", "main") or "main"),
+        "branch": "main",
         "device_name": default_device_name(),
         "games": games,
         "current_game_id": current_game_id,

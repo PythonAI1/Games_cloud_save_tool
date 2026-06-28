@@ -9,7 +9,7 @@
       "name": "Game1",
       "game_root_path": "D:/Your/Game/SaveFolder",
       "save_path": "D:/Your/Game/SaveFolder",
-      "remote_zip_path": "",
+      "remote_zip_path": "Game1/save.zip",
       "emulator_path": "",
       "target_window": null,
       "pending_restore": null,

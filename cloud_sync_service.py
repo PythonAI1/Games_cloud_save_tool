@@ -61,7 +61,7 @@ def validate_sync_inputs(config_data: dict, game_id: str) -> tuple[dict, str, st
     if not save_path:
         raise RuntimeError("缺少本地存档目录。请先在 GameCloudSave 中保存配置。")
     if not remote_zip_path:
-        raise RuntimeError("缺少云端存档目录名。请先在 GameCloudSave 中保存配置。")
+        raise RuntimeError("云端存档路径生成失败。请先在 GameCloudSave 中保存配置。")
 
     save_dir = Path(save_path)
     if not save_dir.exists() or not save_dir.is_dir():
@@ -76,7 +76,7 @@ def get_remote_info(config_data: dict, game_id: str) -> dict:
     branch = str(config_data.get("branch", "main") or "main").strip() or "main"
     zip_path = remote_zip_path_from_input(str(game.get("remote_zip_path", DEFAULT_REMOTE_ZIP_PATH)))
     if not zip_path:
-        raise RuntimeError("缺少云端存档目录名。请先在 GameCloudSave 中保存配置。")
+        raise RuntimeError("云端存档路径生成失败。请先在 GameCloudSave 中保存配置。")
     try:
         return get_remote_metadata(token, repo, metadata_path_for_zip(zip_path), branch)
     except RuntimeError as exc:

@@ -1,5 +1,4 @@
 import platform
-import posixpath
 import re
 import time
 
@@ -51,14 +50,10 @@ def remote_zip_path_from_input(value: str) -> str:
     return f"{value}/{REMOTE_ZIP_FILENAME}"
 
 
-def remote_zip_input_from_path(value: str) -> str:
-    value = value.strip().replace("\\", "/").strip("/")
-    if not value:
-        return ""
-    if value.lower().endswith(".zip"):
-        parent = posixpath.dirname(value)
-        return parent or value
-    return value
+def remote_zip_path_from_game_name(game_name: str) -> str:
+    safe_name = re.sub(r'[<>:"/\\|?*\x00-\x1f]+', "_", game_name or "").strip(" .")
+    safe_name = re.sub(r"\s+", " ", safe_name)
+    return f"{safe_name or 'Game'}/{REMOTE_ZIP_FILENAME}"
 
 
 def now_text() -> str:

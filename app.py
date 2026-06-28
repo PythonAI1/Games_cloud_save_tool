@@ -46,7 +46,7 @@ from utils import (
     now_text,
     parse_time_text,
     parse_transfer_status,
-    remote_zip_input_from_path,
+    remote_zip_path_from_game_name,
     remote_zip_path_from_input,
 )
 
@@ -202,14 +202,12 @@ class GamesCloudSaveApp(QMainWindow):
         self._build_ui(
             token=str(saved.get("token", "")),
             repo=str(saved.get("repo", "")),
-            branch=str(saved.get("branch", "main")),
             emulator_path=str(current_game.get("emulator_path", "")),
             game_name=str(current_game.get("name", "未命名游戏")),
             games=self.games,
             current_game_id=self.current_game_id,
             game_root=saved_game_root or str(self.script_dir),
             save_path=str(current_game.get("save_path") or detected_path),
-            remote_zip_path=remote_zip_input_from_path(str(current_game.get("remote_zip_path", ""))),
         )
         self._apply_styles()
         self._update_pending_restore_ui()
@@ -224,14 +222,12 @@ class GamesCloudSaveApp(QMainWindow):
         self,
         token: str,
         repo: str,
-        branch: str,
         emulator_path: str,
         game_name: str,
         games: list[dict],
         current_game_id: str,
         game_root: str,
         save_path: str,
-        remote_zip_path: str,
     ) -> None:
         central = QWidget(self)
         self.setCentralWidget(central)
@@ -289,7 +285,7 @@ class GamesCloudSaveApp(QMainWindow):
         self.notebook.addTab(self.launcher_tab, "快捷存档游戏启动器")
 
         self._build_overview_tab()
-        self._build_settings_tab(token, repo, branch, emulator_path, game_root, save_path, remote_zip_path)
+        self._build_settings_tab(token, repo, emulator_path, game_root, save_path)
         self._build_launcher_tab()
         self._populate_game_selector(games, current_game_id)
         self._refresh_target_window_label()
@@ -341,11 +337,9 @@ class GamesCloudSaveApp(QMainWindow):
         self,
         token: str,
         repo: str,
-        branch: str,
         emulator_path: str,
         game_root: str,
         save_path: str,
-        remote_zip_path: str,
     ) -> None:
         outer = QVBoxLayout(self.settings_tab)
         page_margin = 4 if self.ultra_compact_dpi_layout else 8
@@ -374,17 +368,13 @@ class GamesCloudSaveApp(QMainWindow):
         self.token_edit = QLineEdit(token)
         self.token_edit.setEchoMode(QLineEdit.Password)
         self.repo_edit = QLineEdit(repo)
-        self.branch_edit = QLineEdit(branch)
         self.emulator_path_edit = QLineEdit(emulator_path)
         self.game_root_edit = QLineEdit(game_root)
-        self.remote_zip_path_edit = QLineEdit(remote_zip_path)
         for edit in (
             self.token_edit,
             self.repo_edit,
-            self.branch_edit,
             self.emulator_path_edit,
             self.game_root_edit,
-            self.remote_zip_path_edit,
         ):
             edit.editingFinished.connect(self.auto_save_settings)
         self.save_path_label = QLabel(save_path)
@@ -404,24 +394,16 @@ class GamesCloudSaveApp(QMainWindow):
 
         self._add_labeled_entry(grid, 1, "GitHub Token", self.token_edit)
         self._add_labeled_entry(grid, 2, "仓库名", self.repo_edit, hint="格式：用户名/仓库名")
-        self._add_labeled_entry(grid, 3, "分支", self.branch_edit, hint="通常填 main")
         self._add_labeled_entry(
             grid,
-            4,
+            3,
             "存档所在目录",
             self.game_root_edit,
             browse_callback=self.pick_directory,
             extra_button=self.open_save_folder_button,
         )
-        self._add_labeled_entry(
-            grid,
-            5,
-            "云端存档目录名",
-            self.remote_zip_path_edit,
-            hint="填写目录名称，例如 games-botw-save；将自动生成 save_backup_latest.zip",
-        )
-        grid.addWidget(self.config_path_label, 6, 0, 1, 2)
-        grid.addWidget(self.view_config_button, 6, 2)
+        grid.addWidget(self.config_path_label, 4, 0, 1, 2)
+        grid.addWidget(self.view_config_button, 4, 2)
         self._refresh_open_save_folder_button_state()
 
         action_row = QHBoxLayout()
@@ -803,7 +785,7 @@ class GamesCloudSaveApp(QMainWindow):
         return self.repo_edit.text().strip()
 
     def _branch(self) -> str:
-        return self.branch_edit.text().strip() or "main"
+        return "main"
 
     def _emulator_path(self) -> str:
         return self.emulator_path_edit.text().strip()
@@ -815,12 +797,19 @@ class GamesCloudSaveApp(QMainWindow):
         return self.save_path_label.text().strip()
 
     def _remote_zip_path(self) -> str:
-        return remote_zip_path_from_input(self.remote_zip_path_edit.text())
+        return self._ensure_game_remote_zip_path(self._current_game())
+
+    def _ensure_game_remote_zip_path(self, game: dict) -> str:
+        remote_zip_path = str(game.get("remote_zip_path", "")).strip()
+        if not remote_zip_path:
+            remote_zip_path = remote_zip_path_from_game_name(str(game.get("name", "")))
+            game["remote_zip_path"] = remote_zip_path
+        return remote_zip_path
 
     def _normalize_config(self, saved: dict) -> dict:
         token = str(saved.get("token", ""))
         repo = str(saved.get("repo", ""))
-        branch = str(saved.get("branch", "main") or "main")
+        branch = "main"
 
         games_raw = saved.get("games")
         games: list[dict] = []
@@ -833,6 +822,8 @@ class GamesCloudSaveApp(QMainWindow):
                 game_root = str(item.get("game_root_path", ""))
                 save_path = str(item.get("save_path", ""))
                 remote_zip_path = remote_zip_path_from_input(str(item.get("remote_zip_path", "")))
+                if not remote_zip_path:
+                    remote_zip_path = remote_zip_path_from_game_name(game_name)
                 pending_restore = self._normalize_pending_restore_state(item.get("pending_restore"))
                 last_uploaded_at = str(item.get("last_uploaded_at", ""))
                 last_downloaded_zip_sha256 = str(item.get("last_downloaded_zip_sha256", "")).strip()
@@ -855,6 +846,8 @@ class GamesCloudSaveApp(QMainWindow):
             legacy_game_root = str(saved.get("game_root_path", ""))
             legacy_save_path = str(saved.get("save_path", ""))
             legacy_remote = remote_zip_path_from_input(str(saved.get("remote_zip_path", "")))
+            if not legacy_remote:
+                legacy_remote = remote_zip_path_from_game_name("你的游戏")
             legacy_pending = self._normalize_pending_restore_state(saved.get("pending_restore"))
             games = [
                 {
@@ -909,7 +902,7 @@ class GamesCloudSaveApp(QMainWindow):
         game["emulator_path"] = self._emulator_path()
         game["game_root_path"] = self._game_root()
         game["save_path"] = self._save_path()
-        game["remote_zip_path"] = self._remote_zip_path()
+        self._ensure_game_remote_zip_path(game)
         game["pending_restore"] = self.pending_restore_state
         if previous_save_path != game["save_path"] or previous_remote_zip_path != game["remote_zip_path"]:
             game["last_downloaded_zip_sha256"] = ""
@@ -920,7 +913,7 @@ class GamesCloudSaveApp(QMainWindow):
         self.game_root_edit.setText(str(game.get("game_root_path", "")))
         self.save_path_label.setText(str(game.get("save_path", "")))
         self._refresh_open_save_folder_button_state()
-        self.remote_zip_path_edit.setText(remote_zip_input_from_path(str(game.get("remote_zip_path", ""))))
+        self._ensure_game_remote_zip_path(game)
         self._refresh_target_window_label()
         self.pending_restore_state = self._normalize_pending_restore_state(game.get("pending_restore"))
         self._update_pending_restore_ui()
@@ -928,7 +921,7 @@ class GamesCloudSaveApp(QMainWindow):
     def _sync_global_config_from_ui(self) -> None:
         self.config_data["token"] = self._token()
         self.config_data["repo"] = self._repo()
-        self.config_data["branch"] = self._branch()
+        self.config_data["branch"] = "main"
         self.config_data.pop("emulator_path", None)
         self.config_data["device_name"] = default_device_name()
         self.config_data["current_game_id"] = self.current_game_id
@@ -963,7 +956,7 @@ class GamesCloudSaveApp(QMainWindow):
                 "name": name,
                 "game_root_path": "",
                 "save_path": "",
-                "remote_zip_path": "",
+                "remote_zip_path": remote_zip_path_from_game_name(name),
                 "emulator_path": "",
                 "target_window": None,
                 "pending_restore": None,
@@ -1045,7 +1038,7 @@ class GamesCloudSaveApp(QMainWindow):
         if not save_path or not Path(save_path).is_dir():
             missing.append("存档所在目录")
         if not str(game.get("remote_zip_path", "")).strip():
-            missing.append("云端存档目录名")
+            missing.append("云端存档路径")
         if not self._normalize_target_window(game.get("target_window")):
             missing.append("目标窗口")
         if missing:
@@ -1481,7 +1474,7 @@ class GamesCloudSaveApp(QMainWindow):
             return False
         if not remote_path:
             if show_message:
-                self._show_error("云端存档目录名为空", "请填写云端存档目录名称。")
+                self._show_error("云端存档路径生成失败", "请先为当前游戏填写游戏名称。")
             return False
         return True
 
