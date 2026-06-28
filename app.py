@@ -82,8 +82,8 @@ def calculate_main_window_metrics(available_width: int, available_height: int, d
     ultra_compact = dpi_scale >= 1.5 or available_width < 1360 or available_height < 900
 
     target_width = 980 if ultra_compact else (1060 if compact else 1120)
-    target_height = 520 if ultra_compact else (550 if compact else 580)
-    notebook_height = 300 if ultra_compact else (330 if compact else 360)
+    notebook_height = 250 if ultra_compact else (270 if compact else 290)
+    target_height = 455 if ultra_compact else (480 if compact else 505)
     width_limit_ratio = 0.92 if available_width < 1200 else 0.85
     height_limit_ratio = 0.90 if available_height < 700 else 0.85
 
@@ -102,7 +102,7 @@ def calculate_main_window_metrics(available_width: int, available_height: int, d
         "default_height": default_height,
         "min_width": min_width,
         "min_height": min_height,
-        "notebook_height": min(notebook_height, max(260, default_height - 190)),
+        "notebook_height": min(notebook_height, max(230, default_height - 195)),
     }
 
 
@@ -358,7 +358,7 @@ class GamesCloudSaveApp(QMainWindow):
         text = QPlainTextEdit()
         text.setReadOnly(True)
         text.setObjectName("InfoText")
-        info_height = 96 if self.ultra_compact_dpi_layout else (110 if self.compact_dpi_layout else 128)
+        info_height = 74 if self.ultra_compact_dpi_layout else (86 if self.compact_dpi_layout else 96)
         text.setFixedHeight(info_height)
         text.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         if side == "local":
@@ -386,7 +386,7 @@ class GamesCloudSaveApp(QMainWindow):
         outer.setSpacing(page_spacing)
 
         card = self._card()
-        outer.addWidget(card)
+        outer.addWidget(card, 0, Qt.AlignTop)
         grid = QGridLayout(card)
         spacing = 6 if self.ultra_compact_dpi_layout else (8 if self.compact_dpi_layout else 12)
         margin = 8 if self.ultra_compact_dpi_layout else (12 if self.compact_dpi_layout else 18)
@@ -448,7 +448,7 @@ class GamesCloudSaveApp(QMainWindow):
         self.save_settings_button = QPushButton("保存设置")
         self.save_settings_button.clicked.connect(self.save_settings_and_notify)
         action_row.addWidget(self.save_settings_button)
-        outer.addLayout(action_row)
+        outer.addLayout(action_row, 0)
         outer.addSpacing(4 if self.ultra_compact_dpi_layout else 8)
 
     def _add_labeled_entry(
@@ -497,7 +497,7 @@ class GamesCloudSaveApp(QMainWindow):
         layout.setSpacing(page_spacing)
 
         card = self._card()
-        layout.addWidget(card)
+        layout.addWidget(card, 0, Qt.AlignTop)
         grid = QGridLayout(card)
         spacing = 6 if self.ultra_compact_dpi_layout else (8 if self.compact_dpi_layout else 12)
         margin = 8 if self.ultra_compact_dpi_layout else (12 if self.compact_dpi_layout else 18)
@@ -525,7 +525,7 @@ class GamesCloudSaveApp(QMainWindow):
 
         self.create_launcher_shortcut_button = QPushButton("创建此游戏云存档启动器至桌面")
         self.create_launcher_shortcut_button.clicked.connect(self.create_current_game_launcher_shortcut)
-        layout.addWidget(self.create_launcher_shortcut_button)
+        layout.addWidget(self.create_launcher_shortcut_button, 0)
         layout.addSpacing(4 if self.ultra_compact_dpi_layout else 8)
 
         # Keep the existing logging calls functional without exposing a logs page.
@@ -778,6 +778,7 @@ class GamesCloudSaveApp(QMainWindow):
         frame = QFrame()
         frame.setObjectName("Card")
         frame.setFrameShape(QFrame.NoFrame)
+        frame.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         return frame
 
     def _resolve_app_dir(self) -> Path:
