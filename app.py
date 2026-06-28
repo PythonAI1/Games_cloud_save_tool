@@ -82,7 +82,6 @@ def calculate_main_window_metrics(available_width: int, available_height: int, d
     ultra_compact = dpi_scale >= 1.5 or available_width < 1360 or available_height < 900
 
     target_width = 980 if ultra_compact else (1060 if compact else 1120)
-    notebook_height = 250 if ultra_compact else (270 if compact else 290)
     target_height = 455 if ultra_compact else (480 if compact else 505)
     width_limit_ratio = 0.92 if available_width < 1200 else 0.85
     height_limit_ratio = 0.90 if available_height < 700 else 0.85
@@ -91,7 +90,7 @@ def calculate_main_window_metrics(available_width: int, available_height: int, d
     default_height = min(target_height, max(430, int(available_height * height_limit_ratio)))
 
     min_width_target = 760 if ultra_compact else (860 if compact else 920)
-    min_height_target = 440 if ultra_compact else (500 if compact else 540)
+    min_height_target = 360 if ultra_compact else (390 if compact else 420)
     min_width = min(min_width_target, default_width)
     min_height = min(min_height_target, default_height)
 
@@ -102,7 +101,6 @@ def calculate_main_window_metrics(available_width: int, available_height: int, d
         "default_height": default_height,
         "min_width": min_width,
         "min_height": min_height,
-        "notebook_height": min(notebook_height, max(230, default_height - 195)),
     }
 
 
@@ -188,14 +186,12 @@ class GamesCloudSaveApp(QMainWindow):
             metrics = calculate_main_window_metrics(available.width(), available.height(), dpi_scale)
             self.compact_dpi_layout = bool(metrics["compact"])
             self.ultra_compact_dpi_layout = bool(metrics["ultra_compact"])
-            self.notebook_height = int(metrics["notebook_height"])
             self.resize(int(metrics["default_width"]), int(metrics["default_height"]))
             self.setMinimumSize(int(metrics["min_width"]), int(metrics["min_height"]))
         else:
             self.ui_scale_factor = 1.0
             self.compact_dpi_layout = False
             self.ultra_compact_dpi_layout = False
-            self.notebook_height = 360
             self.resize(1120, 580)
             self.setMinimumSize(920, 540)
 
@@ -305,7 +301,6 @@ class GamesCloudSaveApp(QMainWindow):
         root_layout.addWidget(header_card)
 
         self.notebook = QTabWidget()
-        self.notebook.setFixedHeight(self.notebook_height)
         root_layout.addWidget(self.notebook, 0)
         root_layout.addStretch(1)
 
@@ -321,11 +316,13 @@ class GamesCloudSaveApp(QMainWindow):
         self._build_launcher_tab()
         self._populate_game_selector(games, current_game_id)
         self._refresh_target_window_label()
+        self._fit_window_to_content()
 
     def _build_overview_tab(self) -> None:
         layout = QVBoxLayout(self.overview_tab)
         layout.setContentsMargins(8, 8, 8, 8)
         layout.setSpacing(14)
+        layout.setAlignment(Qt.AlignTop)
 
         self.suggestion_label = None
 
@@ -350,7 +347,6 @@ class GamesCloudSaveApp(QMainWindow):
         splitter.setStretchFactor(0, 1)
         splitter.setStretchFactor(1, 1)
         layout.addWidget(splitter, 0)
-        layout.addStretch(1)
 
     def _build_info_panel(self, title: str, side: str) -> QWidget:
         box = self._section_group(title)
@@ -358,7 +354,7 @@ class GamesCloudSaveApp(QMainWindow):
         text = QPlainTextEdit()
         text.setReadOnly(True)
         text.setObjectName("InfoText")
-        info_height = 74 if self.ultra_compact_dpi_layout else (86 if self.compact_dpi_layout else 96)
+        info_height = 92 if self.ultra_compact_dpi_layout else (104 if self.compact_dpi_layout else 116)
         text.setFixedHeight(info_height)
         text.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         if side == "local":
@@ -370,6 +366,33 @@ class GamesCloudSaveApp(QMainWindow):
             self.remote_text = text
         inner.addWidget(text, 0)
         return box
+
+    def _fit_window_to_content(self) -> None:
+        QApplication.processEvents()
+        page_heights = [
+            self.notebook.widget(index).sizeHint().height()
+            for index in range(self.notebook.count())
+            if self.notebook.widget(index) is not None
+        ]
+        page_height = max(page_heights) if page_heights else 0
+        tab_height = self.notebook.tabBar().sizeHint().height()
+        pane_padding = 8 if self.ultra_compact_dpi_layout else 12
+        self.notebook.setFixedHeight(page_height + tab_height + pane_padding)
+
+        QApplication.processEvents()
+        screen = QApplication.primaryScreen()
+        if screen is not None:
+            available = screen.availableGeometry()
+            max_width = int(available.width() * (0.92 if available.width() < 1200 else 0.85))
+            max_height = int(available.height() * (0.90 if available.height() < 700 else 0.85))
+        else:
+            max_width = 1120
+            max_height = 580
+
+        hint = self.centralWidget().sizeHint()
+        width = min(max(self.minimumWidth(), hint.width()), max_width)
+        height = min(max(self.minimumHeight(), hint.height()), max_height)
+        self.resize(width, height)
 
     def _build_settings_tab(
         self,
@@ -384,6 +407,7 @@ class GamesCloudSaveApp(QMainWindow):
         page_spacing = 8 if self.ultra_compact_dpi_layout else 14
         outer.setContentsMargins(page_margin, page_margin, page_margin, page_margin)
         outer.setSpacing(page_spacing)
+        outer.setAlignment(Qt.AlignTop)
 
         card = self._card()
         outer.addWidget(card, 0, Qt.AlignTop)
@@ -495,6 +519,7 @@ class GamesCloudSaveApp(QMainWindow):
         page_spacing = 8 if self.ultra_compact_dpi_layout else 14
         layout.setContentsMargins(page_margin, page_margin, page_margin, page_margin)
         layout.setSpacing(page_spacing)
+        layout.setAlignment(Qt.AlignTop)
 
         card = self._card()
         layout.addWidget(card, 0, Qt.AlignTop)
@@ -525,7 +550,7 @@ class GamesCloudSaveApp(QMainWindow):
 
         self.create_launcher_shortcut_button = QPushButton("创建此游戏云存档启动器至桌面")
         self.create_launcher_shortcut_button.clicked.connect(self.create_current_game_launcher_shortcut)
-        layout.addWidget(self.create_launcher_shortcut_button, 0)
+        layout.addWidget(self.create_launcher_shortcut_button, 0, Qt.AlignTop)
         layout.addSpacing(4 if self.ultra_compact_dpi_layout else 8)
 
         # Keep the existing logging calls functional without exposing a logs page.
@@ -681,8 +706,9 @@ class GamesCloudSaveApp(QMainWindow):
                 selection-color: #0b4f7d;
             }
             QTabWidget::pane {
-                border: 1px solid #c9d8e8;
-                border-radius: 14px;
+                border: none;
+                border-top: 1px solid #c9d8e8;
+                border-radius: 0;
                 background: #f9fbfe;
                 top: -1px;
             }
@@ -1297,6 +1323,17 @@ class GamesCloudSaveApp(QMainWindow):
 
     def _set_text(self, widget: QPlainTextEdit, text: str) -> None:
         widget.setPlainText(text)
+        self._resize_info_text_to_content(widget, text)
+        self._fit_window_to_content()
+
+    def _resize_info_text_to_content(self, widget: QPlainTextEdit, text: str) -> None:
+        line_count = max(1, len((text or "").splitlines()))
+        line_height = widget.fontMetrics().lineSpacing()
+        padding = 42 if self.ultra_compact_dpi_layout else 50
+        min_height = 92 if self.ultra_compact_dpi_layout else (104 if self.compact_dpi_layout else 116)
+        max_height = 180 if self.ultra_compact_dpi_layout else (210 if self.compact_dpi_layout else 230)
+        widget.setFixedHeight(max(min_height, min(max_height, line_count * line_height + padding)))
+        widget.updateGeometry()
 
     def _save_config(self) -> bool:
         self._update_current_game_from_ui()
