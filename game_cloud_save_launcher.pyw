@@ -890,12 +890,15 @@ def run_worker_dialog(worker: QObject, title: str, initial_status: str) -> tuple
             launcher_tray.set_phase("idle")
 
 
-def launch_configured_program(game: dict) -> subprocess.Popen:
+def launch_configured_program(game: dict) -> subprocess.Popen | None:
     emulator_path = str(game.get("emulator_path", "")).strip()
     if not emulator_path:
         raise FileNotFoundError("未设置模拟器/游戏路径。请先到 GameCloudSave 设置页填写“模拟器/游戏路径”。")
     if not Path(emulator_path).exists():
         raise FileNotFoundError(f"找不到模拟器或游戏程序：\n{emulator_path}")
+    if Path(emulator_path).suffix.lower() == ".lnk":
+        os.startfile(emulator_path)
+        return None
     return subprocess.Popen([emulator_path], close_fds=True)
 
 

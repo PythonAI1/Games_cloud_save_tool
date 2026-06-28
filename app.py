@@ -48,6 +48,7 @@ from utils import (
     parse_transfer_status,
     remote_zip_path_from_game_name,
     remote_zip_path_from_input,
+    resolve_windows_shortcut_target,
 )
 
 user32 = ctypes.windll.user32
@@ -983,6 +984,16 @@ class GamesCloudSaveApp(QMainWindow):
         self.pending_restore_state = self._normalize_pending_restore_state(game.get("pending_restore"))
         self._update_pending_restore_ui()
 
+    def _refresh_current_game_overview(self) -> None:
+        self.local_info_cache = None
+        self.remote_info_cache = None
+        self._set_text(self.local_text, "")
+        self._set_text(self.remote_text, "")
+        self._refresh_suggestion()
+        self.refresh_local_info()
+        if self._validate_remote_inputs(show_message=False):
+            self.refresh_remote_info()
+
     def _sync_global_config_from_ui(self) -> None:
         self.config_data["token"] = self._token()
         self.config_data["repo"] = self._repo()
@@ -999,14 +1010,9 @@ class GamesCloudSaveApp(QMainWindow):
         if not game_id:
             return
         self.current_game_id = str(game_id)
-        self.local_info_cache = None
-        self.remote_info_cache = None
         self._load_current_game_into_ui()
-        self._set_text(self.local_text, "")
-        self._set_text(self.remote_text, "")
-        self._refresh_suggestion()
         self._save_config()
-        self.refresh_local_info()
+        self._refresh_current_game_overview()
 
     def add_game(self) -> None:
         name, ok = QInputDialog.getText(self, "新增游戏配置", "输入游戏名称：")
@@ -1033,6 +1039,7 @@ class GamesCloudSaveApp(QMainWindow):
         self._populate_game_selector(self.games, self.current_game_id)
         self._load_current_game_into_ui()
         self._save_config()
+        self._refresh_current_game_overview()
 
     def rename_current_game(self) -> None:
         game = self._current_game()
@@ -1058,6 +1065,7 @@ class GamesCloudSaveApp(QMainWindow):
         self._populate_game_selector(self.games, self.current_game_id)
         self._load_current_game_into_ui()
         self._save_config()
+        self._refresh_current_game_overview()
 
     def save_settings_and_notify(self) -> None:
         if not self._save_config():
@@ -1188,10 +1196,15 @@ class GamesCloudSaveApp(QMainWindow):
             self,
             "选择模拟器或游戏程序",
             self._emulator_path() or str(self.script_dir),
-            "程序文件 (*.exe);;所有文件 (*)",
+            "程序或快捷方式 (*.exe *.lnk);;程序文件 (*.exe);;快捷方式 (*.lnk);;所有文件 (*)",
         )
         if not selected:
             return
+        selected_path = Path(selected)
+        if selected_path.suffix.lower() == ".lnk":
+            shortcut_target = resolve_windows_shortcut_target(selected_path)
+            if shortcut_target and Path(shortcut_target).suffix.lower() == ".exe" and Path(shortcut_target).is_file():
+                selected = shortcut_target
         self.emulator_path_edit.setText(selected)
         self._save_config()
 
