@@ -60,8 +60,18 @@ SKIP_DIR_NAMES = BAD_NAME_HINTS | {
 }
 
 GENERIC_GAME_KEYWORDS = {
+    "a",
+    "an",
+    "the",
+    "and",
+    "or",
+    "of",
+    "to",
+    "for",
+    "with",
     "game",
     "games",
+    "gaming",
     "save",
     "saves",
     "savedata",
@@ -72,16 +82,48 @@ GENERIC_GAME_KEYWORDS = {
     "profile",
     "slot",
     "launcher",
+    "prelauncher",
+    "starter",
+    "start",
+    "client",
+    "helper",
+    "bootstrapper",
+    "updater",
+    "update",
+    "setup",
+    "install",
+    "installer",
+    "uninstall",
+    "unins",
+    "crashreporter",
     "emulator",
     "emu",
     "exe",
     "steam",
+    "steamlibrary",
     "epic",
     "gog",
+    "ubisoft",
+    "origin",
+    "ea",
+    "rockstar",
     "xbox",
     "windows",
+    "win",
+    "win64",
+    "win32",
+    "x64",
+    "x86",
+    "bin",
+    "binaries",
+    "shipping",
+    "release",
+    "debug",
     "program",
     "files",
+    "file",
+    "users",
+    "public",
     "appdata",
     "local",
     "locallow",
@@ -94,8 +136,23 @@ GENERIC_GAME_KEYWORDS = {
     "cloud",
     "main",
     "my",
+    "codex",
+    "portable",
+    "repack",
+    "fitgirl",
+    "dodi",
     "steamapps",
     "common",
+}
+
+GENERIC_GAME_KEYWORD_FRAGMENTS = {
+    "launcher",
+    "prelauncher",
+    "bootstrapper",
+    "updater",
+    "installer",
+    "uninstall",
+    "crashreporter",
 }
 
 EMULATOR_EXECUTABLE_NAMES = {
@@ -305,31 +362,58 @@ def _candidate_key(path: Path) -> str:
     return str(path).casefold()
 
 
+def _is_generic_game_keyword(token: str) -> bool:
+    if token in GENERIC_GAME_KEYWORDS or token in EMULATOR_EXECUTABLE_NAMES:
+        return True
+    return any(fragment in token for fragment in GENERIC_GAME_KEYWORD_FRAGMENTS)
+
+
 def _split_keywords(value: str) -> set[str]:
     keywords: set[str] = set()
-    for token in re.findall(r"[0-9A-Za-z\u4e00-\u9fff]+", value.casefold()):
+    tokens = re.findall(r"[0-9A-Za-z\u4e00-\u9fff]+", value.casefold())
+    filtered_tokens: list[str] = []
+
+    for token in tokens:
+        if _is_generic_game_keyword(token):
+            continue
+        if token.isdigit():
+            filtered_tokens.append(token)
+            continue
         if len(token) < 2:
             continue
-        if token in GENERIC_GAME_KEYWORDS or token in EMULATOR_EXECUTABLE_NAMES:
-            continue
+        filtered_tokens.append(token)
         keywords.add(token)
+
+    compact = "".join(filtered_tokens)
+    if len(compact) >= 4 and any(char.isalpha() for char in compact):
+        keywords.add(compact)
     return keywords
+
+
+def _nearest_useful_parent_name(path: Path, max_levels: int = 4) -> str:
+    current = path.parent
+    for _ in range(max_levels):
+        if not current.name:
+            return ""
+        if _split_keywords(current.name):
+            return current.name
+        if current.parent == current:
+            return ""
+        current = current.parent
+    return ""
 
 
 def build_game_keywords(game_name: str, emulator_path: str, game_root: str, target_title: str = "") -> set[str]:
     keywords: set[str] = set()
-    keywords.update(_split_keywords(game_name))
-    keywords.update(_split_keywords(target_title))
+    if not emulator_path:
+        return keywords
 
-    for raw_path in (game_root, emulator_path):
-        if not raw_path:
-            continue
-        path = Path(raw_path)
-        parts = list(path.parts)
-        if path.suffix:
-            parts.append(path.stem)
-        for part in parts[-4:]:
-            keywords.update(_split_keywords(part))
+    path = Path(emulator_path)
+    if path.suffix:
+        keywords.update(_split_keywords(path.stem))
+    parent_name = _nearest_useful_parent_name(path)
+    if parent_name:
+        keywords.update(_split_keywords(parent_name))
 
     return keywords
 
