@@ -23,6 +23,12 @@ def _contents_api_url(repo: str, remote_path: str, branch: str, token: str) -> s
     return f"https://gitee.com/api/v5/repos/{owner}/{name}/contents/{quoted_path}?{query}"
 
 
+def _blob_api_url(repo: str, sha: str, token: str) -> str:
+    owner, name = _repo_parts(repo)
+    query = urllib.parse.urlencode({"access_token": token})
+    return f"https://gitee.com/api/v5/repos/{owner}/{name}/git/blobs/{sha}?{query}"
+
+
 def _extract_gitee_error(body: str) -> str:
     try:
         data = json.loads(body)
@@ -123,8 +129,7 @@ def upload_file_to_gitee(
 def _download_url_from_response(response: dict, token: str) -> str:
     download_url = str(response.get("download_url", "")).strip()
     if download_url:
-        separator = "&" if "?" in download_url else "?"
-        return f"{download_url}{separator}access_token={urllib.parse.quote(token)}"
+        return download_url
 
     html_url = str(response.get("html_url", "")).strip()
     if "/blob/" in html_url:
@@ -132,13 +137,12 @@ def _download_url_from_response(response: dict, token: str) -> str:
     raise RuntimeError("Gitee 返回的数据里没有可下载的地址。")
 
 
-def _download_file_from_api_content(response: dict, temp_path: str, emit_progress) -> bool:
-    content = str(response.get("content", "")).replace("\n", "").strip()
-    encoding = str(response.get("encoding", "")).strip().lower()
-    if not content or encoding != "base64":
+def _write_base64_content_to_file(content: str, encoding: str, temp_path: str, emit_progress, status: str) -> bool:
+    normalized_encoding = str(encoding).strip().lower()
+    if not content or normalized_encoding != "base64":
         return False
 
-    emit_progress(28, "正在从 Gitee API 读取文件内容...")
+    emit_progress(28, status)
     decoded = base64.b64decode(content)
     emit_progress(
         46,
@@ -152,6 +156,23 @@ def _download_file_from_api_content(response: dict, temp_path: str, emit_progres
     return True
 
 
+def _download_file_from_blob_api(token: str, repo: str, response: dict, temp_path: str, emit_progress) -> bool:
+    sha = str(response.get("sha", "")).strip()
+    if not sha:
+        return False
+    blob_response = gitee_request(_blob_api_url(repo, sha, token), "GET")
+    blob_file = _response_as_file_object(blob_response, sha)
+    content = str(blob_file.get("content", "")).replace("\n", "").strip()
+    encoding = str(blob_file.get("encoding", "")).strip()
+    return _write_base64_content_to_file(
+        content,
+        encoding,
+        temp_path,
+        emit_progress,
+        "正在从 Gitee Blob API 读取完整文件内容...",
+    )
+
+
 def download_file(token: str, repo: str, remote_path: str, branch: str, emit_progress) -> str:
     response = _response_as_file_object(
         gitee_request(_contents_api_url(repo, remote_path, branch, token), "GET"),
@@ -161,11 +182,11 @@ def download_file(token: str, repo: str, remote_path: str, branch: str, emit_pro
     fd, temp_path = tempfile.mkstemp(prefix="games_save_download_", suffix=".zip")
     os.close(fd)
 
-    if _download_file_from_api_content(response, temp_path, emit_progress):
-        return temp_path
-
     url = _download_url_from_response(response, token)
-    request = urllib.request.Request(url, headers={"User-Agent": "GamesCloudSave"})
+    request = urllib.request.Request(
+        url,
+        headers={"User-Agent": "GamesCloudSave", "Authorization": f"Bearer {token}"},
+    )
     try:
         with urllib.request.urlopen(request, timeout=90) as response_handle, open(temp_path, "wb") as target:
             total = int(response_handle.headers.get("Content-Length", "0"))
@@ -187,8 +208,10 @@ def download_file(token: str, repo: str, remote_path: str, branch: str, emit_pro
                         file_size=format_size(total if total > 0 else downloaded),
                     ),
                 )
-    except urllib.error.HTTPError as exc:
-        raise RuntimeError(f"下载失败：HTTP {exc.code}") from exc
-    except urllib.error.URLError as exc:
+    except (urllib.error.HTTPError, urllib.error.URLError) as exc:
+        if _download_file_from_blob_api(token, repo, response, temp_path, emit_progress):
+            return temp_path
+        if isinstance(exc, urllib.error.HTTPError):
+            raise RuntimeError(f"下载失败：HTTP {exc.code}") from exc
         raise RuntimeError(f"下载失败，网络错误：{exc.reason}") from exc
     return temp_path
