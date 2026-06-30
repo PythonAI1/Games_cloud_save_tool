@@ -76,7 +76,7 @@ def get_remote_info(config_data: dict, game_id: str) -> dict:
     try:
         return provider.get_remote_metadata(token, repo, metadata_path_for_zip(zip_path), branch)
     except RuntimeError as exc:
-        if "404" in str(exc):
+        if "404" in str(exc) or "找不到文件" in str(exc):
             return {"uploaded_at": "", "not_uploaded": True}
         raise
 

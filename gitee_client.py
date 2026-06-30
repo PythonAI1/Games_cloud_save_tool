@@ -6,6 +6,7 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
+from typing import Any
 
 from utils import format_size, format_speed, transfer_status
 
@@ -34,7 +35,21 @@ def _extract_gitee_error(body: str) -> str:
     return body.strip() or "未知错误"
 
 
-def gitee_request(url: str, method: str, data: bytes | None = None) -> dict:
+def _unexpected_response_error(response: Any, remote_path: str) -> RuntimeError:
+    if isinstance(response, list):
+        if not response:
+            return RuntimeError(f"Gitee 中找不到文件：{remote_path}")
+        return RuntimeError(f"Gitee 返回的是目录列表，不是单个文件：{remote_path}")
+    return RuntimeError(f"Gitee 返回了无法识别的数据格式：{type(response).__name__}")
+
+
+def _response_as_file_object(response: Any, remote_path: str) -> dict:
+    if isinstance(response, dict):
+        return response
+    raise _unexpected_response_error(response, remote_path)
+
+
+def gitee_request(url: str, method: str, data: bytes | None = None) -> Any:
     request = urllib.request.Request(
         url,
         data=data,
@@ -55,7 +70,10 @@ def gitee_request(url: str, method: str, data: bytes | None = None) -> dict:
 
 
 def get_remote_metadata(token: str, repo: str, json_path: str, branch: str) -> dict:
-    response = gitee_request(_contents_api_url(repo, json_path, branch, token), "GET")
+    response = _response_as_file_object(
+        gitee_request(_contents_api_url(repo, json_path, branch, token), "GET"),
+        json_path,
+    )
     content = response.get("content", "")
     if not content:
         raise RuntimeError("云端说明文件缺少可读取的内容。")
@@ -66,6 +84,9 @@ def get_remote_metadata(token: str, repo: str, json_path: str, branch: str) -> d
 def get_existing_file_sha(token: str, repo: str, remote_path: str, branch: str) -> str | None:
     try:
         response = gitee_request(_contents_api_url(repo, remote_path, branch, token), "GET")
+        if isinstance(response, list) and not response:
+            return None
+        response = _response_as_file_object(response, remote_path)
         return response.get("sha")
     except RuntimeError as exc:
         if "404" in str(exc):
@@ -111,13 +132,39 @@ def _download_url_from_response(response: dict, token: str) -> str:
     raise RuntimeError("Gitee 返回的数据里没有可下载的地址。")
 
 
+def _download_file_from_api_content(response: dict, temp_path: str, emit_progress) -> bool:
+    content = str(response.get("content", "")).replace("\n", "").strip()
+    encoding = str(response.get("encoding", "")).strip().lower()
+    if not content or encoding != "base64":
+        return False
+
+    emit_progress(28, "正在从 Gitee API 读取文件内容...")
+    decoded = base64.b64decode(content)
+    emit_progress(
+        46,
+        transfer_status(
+            "正在写入下载的 zip 压缩包...",
+            file_size=format_size(len(decoded)),
+        ),
+    )
+    with open(temp_path, "wb") as target:
+        target.write(decoded)
+    return True
+
+
 def download_file(token: str, repo: str, remote_path: str, branch: str, emit_progress) -> str:
-    response = gitee_request(_contents_api_url(repo, remote_path, branch, token), "GET")
-    url = _download_url_from_response(response, token)
+    response = _response_as_file_object(
+        gitee_request(_contents_api_url(repo, remote_path, branch, token), "GET"),
+        remote_path,
+    )
 
     fd, temp_path = tempfile.mkstemp(prefix="games_save_download_", suffix=".zip")
     os.close(fd)
 
+    if _download_file_from_api_content(response, temp_path, emit_progress):
+        return temp_path
+
+    url = _download_url_from_response(response, token)
     request = urllib.request.Request(url, headers={"User-Agent": "GamesCloudSave"})
     try:
         with urllib.request.urlopen(request, timeout=90) as response_handle, open(temp_path, "wb") as target:
