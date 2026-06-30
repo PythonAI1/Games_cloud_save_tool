@@ -211,6 +211,14 @@ class SaveDirectoryDetectDialog(QDialog):
         self.tip_label.setWordWrap(True)
         layout.addWidget(self.tip_label)
 
+        warning_label = QLabel("预测存档位置仅供参考，请确认存档位置正确后再使用。")
+        warning_label.setWordWrap(True)
+        warning_label.setStyleSheet(
+            "color: #9a4b00; background: #fff4dc; border: 1px solid #e0a84a;"
+            " border-radius: 8px; padding: 8px 10px; font-weight: 700;"
+        )
+        layout.addWidget(warning_label)
+
         self.candidate_list = QListWidget()
         self.candidate_list.setObjectName("SaveDirectoryCandidateList")
         self.candidate_list.itemDoubleClicked.connect(lambda _item: self.use_selected_directory())
@@ -241,21 +249,21 @@ class SaveDirectoryDetectDialog(QDialog):
 
     def show_candidates(self, candidates: list[SaveDirCandidate]) -> None:
         self.candidate_list.clear()
-        if not candidates:
+        visible_candidates = [candidate for candidate in candidates if candidate.exists]
+        if not visible_candidates:
             item = QListWidgetItem("未找到可参考的候选目录。可以点击“启动游戏并检测变化文件”或“手动浏览”。")
             item.setData(Qt.UserRole, "")
             self.candidate_list.addItem(item)
             self.use_button.setEnabled(False)
             return
 
-        for candidate in candidates[:50]:
-            status = "存在" if candidate.exists else "未找到"
+        for candidate in visible_candidates[:50]:
             changed_preview = ""
             if candidate.changed_files:
                 names = [item.path.name for item in candidate.changed_files[:6]]
                 changed_preview = "\n变化文件：" + "、".join(names)
             text = (
-                f"[{candidate.source}] [{status}] 可能性评分：{candidate.score}\n"
+                f"[{candidate.source}] 可能性评分：{candidate.score}\n"
                 f"{candidate.folder}\n"
                 f"原因：{candidate.reason}"
                 f"{changed_preview}"
@@ -337,9 +345,15 @@ class SaveDirectoryDetectDialog(QDialog):
 
         self.show_candidates(merged)
         if change_candidates:
-            self.tip_label.setText("已分析变化文件，实际发生变化且最像存档目录的候选项已排在前面。")
+            self.tip_label.setText(
+                "已分析变化文件，实际发生变化且最像存档目录的候选项已排在前面。\n"
+                "预测存档位置仅供参考，请确认存档位置正确后再使用。"
+            )
         else:
-            self.tip_label.setText("没有检测到明显文件变化。可以重新检测，或使用规则参考/手动浏览。")
+            self.tip_label.setText(
+                "没有检测到明显文件变化。可以重新检测，或使用规则参考/手动浏览。\n"
+                "预测存档位置仅供参考，请确认存档位置正确后再使用。"
+            )
 
     def browse_directory(self) -> None:
         selected = QFileDialog.getExistingDirectory(self, "选择存档文件夹", str(Path.home()))
