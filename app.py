@@ -215,9 +215,11 @@ class GamesCloudSaveApp(QMainWindow):
         self.progress_dialog_speed_label: QLabel | None = None
         self.progress_dialog_size_label: QLabel | None = None
         self.startup_remote_refresh = False
+        self._provider_change_guard = False
 
         saved = self._normalize_config(self._load_saved_config())
         self.config_data = saved
+        self._confirmed_provider_type = str(saved.get("provider_type", "github")).strip().lower() or "github"
         self.games: list[dict] = saved["games"]
         self.current_game_id = str(saved.get("current_game_id") or self.games[0]["id"])
         current_game = self._current_game()
@@ -419,7 +421,6 @@ class GamesCloudSaveApp(QMainWindow):
         provider_index = self.provider_combo.findData(provider_type)
         self.provider_combo.setCurrentIndex(provider_index if provider_index >= 0 else 0)
         self.provider_combo.currentIndexChanged.connect(self._on_provider_changed)
-        self.provider_combo.currentIndexChanged.connect(lambda _index: self.auto_save_settings())
 
         self.token_edit = QLineEdit(token)
         self.token_edit.setEchoMode(QLineEdit.Password)
@@ -938,7 +939,40 @@ class GamesCloudSaveApp(QMainWindow):
         self.provider_combo.setToolTip(f"当前云端方式：{provider_name}")
 
     def _on_provider_changed(self, _index: int) -> None:
+        if self._provider_change_guard:
+            return
+        new_provider_type = str(self.provider_combo.currentData() or "github").strip().lower()
+        old_provider_type = self._confirmed_provider_type
+        if new_provider_type == old_provider_type:
+            self._refresh_provider_ui()
+            return
+
+        new_provider_name = provider_display_name(new_provider_type)
+        message = (
+            "切换云端方式后，所有游戏后续都会统一使用新的平台、访问令牌和仓库名进行上传、下载和读取云端信息。\n\n"
+            "这不会删除你原来平台上的存档，也不会自动帮你把原平台的存档迁移到新平台。\n\n"
+            "如果新平台的仓库里还没有对应游戏的存档，下载时会显示未上传，上传后会从新平台开始保存。\n\n"
+            f"确定要切换到 {new_provider_name} 吗？"
+        )
+        box = QMessageBox(self)
+        box.setIcon(QMessageBox.Warning)
+        box.setWindowTitle("确认切换云端方式")
+        box.setText(message)
+        confirm_button = box.addButton("确认切换", QMessageBox.AcceptRole)
+        box.addButton("取消", QMessageBox.RejectRole)
+        box.exec_()
+        if box.clickedButton() is not confirm_button:
+            old_index = self.provider_combo.findData(old_provider_type)
+            self._provider_change_guard = True
+            try:
+                self.provider_combo.setCurrentIndex(old_index if old_index >= 0 else 0)
+            finally:
+                self._provider_change_guard = False
+            return
+
+        self._confirmed_provider_type = new_provider_type
         self._refresh_provider_ui()
+        self.auto_save_settings()
 
     def _ensure_game_remote_zip_path(self, game: dict) -> str:
         remote_zip_path = str(game.get("remote_zip_path", "")).strip()
