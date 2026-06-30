@@ -239,12 +239,14 @@ class SaveDirectoryDetectDialog(QDialog):
         self.detect_button = QPushButton("启动游戏并检测变化文件")
         self.analyze_button = QPushButton("分析变化文件")
         self.browse_button = QPushButton("手动浏览")
+        self.open_button = QPushButton("打开选中目录")
         self.use_button = QPushButton("使用选中目录")
         self.cancel_button = QPushButton("取消")
         self.analyze_button.setEnabled(False)
         button_row.addWidget(self.detect_button)
         button_row.addWidget(self.analyze_button)
         button_row.addWidget(self.browse_button)
+        button_row.addWidget(self.open_button)
         button_row.addWidget(self.use_button)
         button_row.addWidget(self.cancel_button)
         layout.addLayout(button_row)
@@ -252,6 +254,7 @@ class SaveDirectoryDetectDialog(QDialog):
         self.detect_button.clicked.connect(self.start_game_change_detection)
         self.analyze_button.clicked.connect(self.analyze_file_changes)
         self.browse_button.clicked.connect(self.browse_directory)
+        self.open_button.clicked.connect(self.open_selected_directory)
         self.use_button.clicked.connect(self.use_selected_directory)
         self.cancel_button.clicked.connect(self.reject)
 
@@ -371,6 +374,22 @@ class SaveDirectoryDetectDialog(QDialog):
             return
         self.selected_directory = selected
         self.accept()
+
+    def open_selected_directory(self) -> None:
+        current = self.candidate_list.currentItem()
+        if current is None:
+            return
+        selected = str(current.data(Qt.UserRole) or "").strip()
+        if not selected:
+            return
+        path = Path(selected)
+        if not path.exists() or not path.is_dir():
+            QMessageBox.warning(self, "目录不存在", f"选中的目录不存在：\n{path}")
+            return
+        try:
+            os.startfile(str(path))
+        except OSError as exc:
+            QMessageBox.warning(self, "打开失败", f"无法打开选中目录：\n{exc}")
 
     def use_selected_directory(self) -> None:
         current = self.candidate_list.currentItem()
@@ -1525,6 +1544,10 @@ class GamesCloudSaveApp(QMainWindow):
 
     def detect_save_directory(self) -> None:
         self._update_current_game_from_ui()
+        emulator_path = self._emulator_path()
+        if not emulator_path or not Path(emulator_path).is_file():
+            self._show_warning("无法检测", "请先填写正确的“模拟器/游戏路径”，再检测存档目录。")
+            return
         dialog = SaveDirectoryDetectDialog(self, self._current_game())
         if dialog.exec_() != QDialog.Accepted:
             return
