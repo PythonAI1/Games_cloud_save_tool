@@ -1,5 +1,6 @@
 import os
 import re
+import string
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -56,8 +57,6 @@ SKIP_DIR_NAMES = BAD_NAME_HINTS | {
     "node_modules",
     "packages",
     "windows",
-    "program files",
-    "program files (x86)",
 }
 
 GENERIC_GAME_KEYWORDS = {
@@ -89,6 +88,14 @@ GENERIC_GAME_KEYWORDS = {
     "roaming",
     "documents",
     "desktop",
+    "python",
+    "programs",
+    "apps",
+    "cloud",
+    "main",
+    "my",
+    "steamapps",
+    "common",
 }
 
 EMULATOR_EXECUTABLE_NAMES = {
@@ -104,6 +111,36 @@ EMULATOR_EXECUTABLE_NAMES = {
     "dolphin",
     "retroarch",
 }
+
+SAVE_DIR_NAME_HINTS = {
+    "save",
+    "saves",
+    "saved",
+    "savedata",
+    "save_data",
+    "saved games",
+    "profile",
+    "profiles",
+    "userdata",
+    "user_data",
+    "steam_settings",
+    "settings",
+}
+
+GLOBAL_SEARCH_ROOT_NAMES = (
+    "Games",
+    "Game",
+    "SteamLibrary",
+    "SteamLibrary/steamapps/common",
+    "steamapps/common",
+    "Rockstar Games",
+    "GOG Games",
+    "Epic Games",
+    "Program Files",
+    "Program Files (x86)",
+    "Documents",
+    "Saved Games",
+)
 
 KNOWN_SAVE_LOCATION_RULES = [
     {
@@ -315,6 +352,149 @@ def apply_game_keyword_boost(candidates: list[SaveDirCandidate], game_keywords: 
     return candidates
 
 
+def _is_skipped_directory(path: Path) -> bool:
+    return any(part.casefold() in SKIP_DIR_NAMES for part in path.parts)
+
+
+def _path_has_save_hint(path: Path) -> bool:
+    name = path.name.casefold().replace("-", "_")
+    return any(hint == name or hint in name for hint in SAVE_DIR_NAME_HINTS)
+
+
+def _path_matches_keywords(path: Path, game_keywords: set[str]) -> bool:
+    if not game_keywords:
+        return False
+    path_text = str(path).casefold()
+    return any(keyword in path_text for keyword in game_keywords)
+
+
+def _add_candidate(
+    candidates: dict[str, SaveDirCandidate],
+    folder: Path,
+    score: int,
+    source: str,
+    reason: str,
+) -> None:
+    if not folder.exists() or not folder.is_dir() or _is_skipped_directory(folder):
+        return
+    key = _candidate_key(folder)
+    candidate = SaveDirCandidate(
+        folder=folder,
+        score=score,
+        reason=reason,
+        source=source,
+        exists=True,
+    )
+    previous = candidates.get(key)
+    if previous is None or candidate.score > previous.score:
+        candidates[key] = candidate
+
+
+def _fixed_drive_roots() -> list[Path]:
+    if os.name != "nt":
+        return [Path("/")]
+    roots: list[Path] = []
+    for letter in string.ascii_uppercase:
+        root = Path(f"{letter}:\\")
+        if root.exists() and root.is_dir():
+            roots.append(root)
+    return roots
+
+
+def _global_common_search_roots(context: dict[str, str]) -> list[Path]:
+    roots: list[Path] = []
+    for key in ("documents", "saved_games", "localappdata", "locallow", "appdata"):
+        value = context.get(key, "")
+        if value:
+            path = Path(value)
+            if path.exists() and path.is_dir() and path not in roots:
+                roots.append(path)
+
+    for drive in _fixed_drive_roots():
+        for name in GLOBAL_SEARCH_ROOT_NAMES:
+            path = drive / Path(name)
+            if path.exists() and path.is_dir() and path not in roots:
+                roots.append(path)
+    return roots
+
+
+def _walk_candidate_dirs(root: Path, max_depth: int, max_dirs: int) -> list[Path]:
+    found: list[Path] = []
+    root_depth = len(root.parts)
+    for current_root, dir_names, _file_names in os.walk(root):
+        current = Path(current_root)
+        if len(current.parts) - root_depth >= max_depth:
+            dir_names[:] = []
+        dir_names[:] = [
+            name for name in dir_names
+            if name.casefold() not in SKIP_DIR_NAMES
+        ]
+        found.append(current)
+        if len(found) >= max_dirs:
+            break
+    return found
+
+
+def _game_install_roots(emulator_path: str) -> list[Path]:
+    if not emulator_path:
+        return []
+    path = Path(emulator_path)
+    if not path.exists():
+        return []
+    current = path.parent if path.is_file() else path
+    roots: list[Path] = []
+    for _ in range(4):
+        if current.exists() and current.is_dir() and current not in roots:
+            roots.append(current)
+        if current.parent == current:
+            break
+        current = current.parent
+    return roots
+
+
+def _build_game_root_candidates(emulator_path: str, game_keywords: set[str]) -> list[SaveDirCandidate]:
+    candidates: dict[str, SaveDirCandidate] = {}
+    for root in _game_install_roots(emulator_path):
+        for folder in _walk_candidate_dirs(root, max_depth=4, max_dirs=1200):
+            if folder == root:
+                continue
+            if not _path_has_save_hint(folder):
+                continue
+            score = 135
+            reason = "游戏根目录附近发现存档特征目录"
+            if _path_matches_keywords(folder, game_keywords):
+                score += 45
+                reason += "，且路径包含游戏相关关键词"
+            _add_candidate(candidates, folder, score, "游戏目录搜索", reason)
+    return list(candidates.values())
+
+
+def _build_global_keyword_candidates(context: dict[str, str], game_keywords: set[str]) -> list[SaveDirCandidate]:
+    if not game_keywords:
+        return []
+
+    candidates: dict[str, SaveDirCandidate] = {}
+    scanned_dirs = 0
+    for root in _global_common_search_roots(context):
+        for folder in _walk_candidate_dirs(root, max_depth=5, max_dirs=1000):
+            scanned_dirs += 1
+            if scanned_dirs > 12000:
+                break
+            if not _path_matches_keywords(folder, game_keywords):
+                continue
+            score = 125
+            reason = "常见位置下发现路径包含游戏相关关键词"
+            if _path_has_save_hint(folder):
+                score += 35
+                reason += "，且目录名像存档目录"
+            _add_candidate(candidates, folder, score, "全局常见位置搜索", reason)
+            if len(candidates) >= 80:
+                return list(candidates.values())
+        if scanned_dirs > 12000:
+            break
+    return list(candidates.values())
+
+
 def build_reference_candidates(
     game_root: str,
     emulator_path: str,
@@ -353,6 +533,18 @@ def build_reference_candidates(
             previous = candidates.get(key)
             if previous is None or candidate.score > previous.score:
                 candidates[key] = candidate
+
+    for candidate in _build_game_root_candidates(emulator_path, game_keywords):
+        key = _candidate_key(candidate.folder)
+        previous = candidates.get(key)
+        if previous is None or candidate.score > previous.score:
+            candidates[key] = candidate
+
+    for candidate in _build_global_keyword_candidates(context, game_keywords):
+        key = _candidate_key(candidate.folder)
+        previous = candidates.get(key)
+        if previous is None or candidate.score > previous.score:
+            candidates[key] = candidate
 
     result = list(candidates.values())
     apply_game_keyword_boost(result, game_keywords, boost=70)
