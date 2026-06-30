@@ -32,6 +32,7 @@ from cloud_sync_service import (
     upload_game_archive,
 )
 from constants import APP_DATA_DIR_NAME, CONFIG_FILE_NAME
+from providers import provider_type_from_config
 from save_manager import snapshot_save_directory
 from utils import default_device_name, now_text, parse_transfer_status, remote_zip_path_from_game_name, remote_zip_path_from_input
 
@@ -283,6 +284,7 @@ def load_saved_config_with_legacy_fallback() -> dict:
 
 def build_default_config() -> dict:
     return {
+        "provider_type": "github",
         "token": "",
         "repo": "",
         "branch": "main",
@@ -376,6 +378,7 @@ def normalize_config(saved: dict) -> dict:
         current_game_id = games[0]["id"]
 
     return {
+        "provider_type": provider_type_from_config(saved),
         "token": str(saved.get("token", "")),
         "repo": str(saved.get("repo", "")),
         "branch": "main",

@@ -1,4 +1,5 @@
 {
+  "provider_type": "github",
   "token_protected": "",
   "repo": "yourname/your-repo",
   "branch": "main",

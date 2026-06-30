@@ -10,14 +10,8 @@ from typing import Callable
 
 from config import update_game_fields
 from constants import DEFAULT_REMOTE_ZIP_PATH, PENDING_BACKUP_DIR_NAME
-from github_client import (
-    download_file,
-    get_download_url,
-    get_existing_file_sha,
-    get_remote_metadata,
-    metadata_path_for_zip,
-    put_file_to_github,
-)
+from providers import create_provider, normalized_repo_name, provider_display_name, provider_type_from_config
+from providers.base import metadata_path_for_zip
 from save_manager import (
     collect_files,
     copy_directory_snapshot,
@@ -49,15 +43,16 @@ def get_game_by_id(config_data: dict, game_id: str) -> dict:
 def validate_sync_inputs(config_data: dict, game_id: str) -> tuple[dict, str, str, str, Path, str]:
     game = get_game_by_id(config_data, game_id)
     token = str(config_data.get("token", "")).strip()
-    repo = str(config_data.get("repo", "")).strip()
+    repo = normalized_repo_name(config_data).strip()
     branch = str(config_data.get("branch", "main") or "main").strip() or "main"
     save_path = str(game.get("save_path", "")).strip()
     remote_zip_path = remote_zip_path_from_input(str(game.get("remote_zip_path", DEFAULT_REMOTE_ZIP_PATH)))
+    provider_name = provider_display_name(provider_type_from_config(config_data))
 
     if not token:
-        raise RuntimeError("缺少 GitHub Token。请先在 GameCloudSave 中保存配置。")
+        raise RuntimeError(f"缺少 {provider_name} Token。请先在 GameCloudSave 中保存配置。")
     if not repo:
-        raise RuntimeError("缺少 GitHub 仓库名。请先在 GameCloudSave 中保存配置。")
+        raise RuntimeError(f"缺少 {provider_name} 仓库名。请先在 GameCloudSave 中保存配置。")
     if not save_path:
         raise RuntimeError("缺少本地存档目录。请先在 GameCloudSave 中保存配置。")
     if not remote_zip_path:
@@ -71,14 +66,15 @@ def validate_sync_inputs(config_data: dict, game_id: str) -> tuple[dict, str, st
 
 def get_remote_info(config_data: dict, game_id: str) -> dict:
     game = get_game_by_id(config_data, game_id)
+    provider = create_provider(config_data)
     token = str(config_data.get("token", "")).strip()
-    repo = str(config_data.get("repo", "")).strip()
+    repo = normalized_repo_name(config_data).strip()
     branch = str(config_data.get("branch", "main") or "main").strip() or "main"
     zip_path = remote_zip_path_from_input(str(game.get("remote_zip_path", DEFAULT_REMOTE_ZIP_PATH)))
     if not zip_path:
         raise RuntimeError("云端存档路径生成失败。请先在 GameCloudSave 中保存配置。")
     try:
-        return get_remote_metadata(token, repo, metadata_path_for_zip(zip_path), branch)
+        return provider.get_remote_metadata(token, repo, metadata_path_for_zip(zip_path), branch)
     except RuntimeError as exc:
         if "404" in str(exc):
             return {"uploaded_at": "", "not_uploaded": True}
@@ -102,6 +98,7 @@ def upload_game_archive(
 ) -> dict:
     temp_zip: str | None = None
     try:
+        provider = create_provider(config_data)
         game, token, repo, branch, save_dir, zip_path = validate_sync_inputs(config_data, game_id)
 
         emit_progress(5, "正在扫描本地存档文件...")
@@ -125,11 +122,11 @@ def upload_game_archive(
             emit_progress=emit_progress,
         )
 
-        emit_progress(74, "正在检查 GitHub 上是否已有旧备份...")
-        existing_zip_sha = get_existing_file_sha(token, repo, zip_path, branch)
+        emit_progress(74, f"正在检查 {provider.display_name} 上是否已有旧备份...")
+        existing_zip_sha = provider.get_existing_file_sha(token, repo, zip_path, branch)
 
         emit_progress(82, transfer_status("正在上传 zip 存档包...", file_size=format_size(zip_size)))
-        upload_speed = put_file_to_github(
+        upload_speed = provider.upload_file(
             token,
             repo,
             zip_path,
@@ -164,6 +161,7 @@ def update_game_metadata(
     emit_log: LogCallback = _ignore_log,
     upload_speed: float | None = None,
 ) -> dict:
+    provider = create_provider(config_data)
     game, token, repo, branch, _save_dir, zip_path = validate_sync_inputs(config_data, game_id)
     json_path = metadata_path_for_zip(zip_path)
     emit_progress(
@@ -177,8 +175,8 @@ def update_game_metadata(
     json_encoded = base64.b64encode(
         json.dumps(metadata, ensure_ascii=False, indent=2).encode("utf-8")
     ).decode("ascii")
-    existing_json_sha = get_existing_file_sha(token, repo, json_path, branch)
-    put_file_to_github(
+    existing_json_sha = provider.get_existing_file_sha(token, repo, json_path, branch)
+    provider.upload_file(
         token,
         repo,
         json_path,
@@ -236,11 +234,11 @@ def download_game(
     temp_extract_dir: str | None = None
     pending_state: dict | None = None
     try:
+        provider = create_provider(config_data)
         game, token, repo, branch, save_dir, zip_path = validate_sync_inputs(config_data, game_id)
-        emit_progress(8, "正在读取云端下载地址...")
-        download_url = get_download_url(token, repo, zip_path, branch)
+        emit_progress(8, "正在读取云端下载信息...")
         emit_progress(18, "正在下载云端 zip 压缩包...")
-        temp_zip = download_file(download_url, emit_progress)
+        temp_zip = provider.download_file(token, repo, zip_path, branch, emit_progress)
         zip_size = os.path.getsize(temp_zip)
         zip_sha256 = sha256_of_file(temp_zip)
         emit_log(f"云端压缩包下载完成：{format_size(zip_size)}，SHA256={zip_sha256[:16]}...")
@@ -305,8 +303,6 @@ def download_game(
             "pending_restore": pending_state,
             "zip_sha256": zip_sha256,
         }
-    except Exception:
-        raise
     finally:
         if temp_zip and os.path.exists(temp_zip):
             try:
