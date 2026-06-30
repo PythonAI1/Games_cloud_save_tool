@@ -39,6 +39,7 @@ from PyQt5.QtWidgets import (
 from config import load_config, save_config
 from cloud_sync_service import download_game, get_remote_info, rollback_game, upload_game
 from constants import APP_DATA_DIR_NAME, CONFIG_FILE_NAME, DEFAULT_GAME_ID
+from providers import normalized_repo_name, provider_display_name, provider_type_from_config
 from utils import (
     default_device_name,
     format_size,
@@ -227,6 +228,7 @@ class GamesCloudSaveApp(QMainWindow):
         self.pending_restore_state = self._normalize_pending_restore_state(current_game.get("pending_restore"))
 
         self._build_ui(
+            provider_type=str(saved.get("provider_type", "github")),
             token=str(saved.get("token", "")),
             repo=str(saved.get("repo", "")),
             emulator_path=str(current_game.get("emulator_path", "")),
@@ -247,6 +249,7 @@ class GamesCloudSaveApp(QMainWindow):
 
     def _build_ui(
         self,
+        provider_type: str,
         token: str,
         repo: str,
         emulator_path: str,
@@ -313,7 +316,7 @@ class GamesCloudSaveApp(QMainWindow):
         self.notebook.addTab(self.launcher_tab, "快捷存档游戏启动器")
 
         self._build_overview_tab()
-        self._build_settings_tab(token, repo, emulator_path, game_root, save_path)
+        self._build_settings_tab(provider_type, token, repo, emulator_path, game_root, save_path)
         self._build_launcher_tab()
         self._populate_game_selector(games, current_game_id)
         self._refresh_target_window_label()
@@ -397,6 +400,7 @@ class GamesCloudSaveApp(QMainWindow):
 
     def _build_settings_tab(
         self,
+        provider_type: str,
         token: str,
         repo: str,
         emulator_path: str,
@@ -428,6 +432,14 @@ class GamesCloudSaveApp(QMainWindow):
         intro.setObjectName("SecondaryLabel")
         grid.addWidget(intro, 0, 0, 1, 3)
 
+        self.provider_combo = QComboBox()
+        self.provider_combo.addItem("GitHub", "github")
+        self.provider_combo.addItem("Gitee", "gitee")
+        provider_index = self.provider_combo.findData(provider_type)
+        self.provider_combo.setCurrentIndex(provider_index if provider_index >= 0 else 0)
+        self.provider_combo.currentIndexChanged.connect(self._on_provider_changed)
+        self.provider_combo.currentIndexChanged.connect(lambda _index: self.auto_save_settings())
+
         self.token_edit = QLineEdit(token)
         self.token_edit.setEchoMode(QLineEdit.Password)
         self.repo_edit = QLineEdit(repo)
@@ -455,7 +467,7 @@ class GamesCloudSaveApp(QMainWindow):
         self.capture_window_button = QPushButton("选择目标窗口")
         self.capture_window_button.clicked.connect(self.start_target_window_capture)
 
-        self._add_labeled_entry(grid, 1, "GitHub Token", self.token_edit)
+        self._add_labeled_entry(grid, 1, "访问令牌", self.token_edit)
         self._add_labeled_entry(grid, 2, "仓库名", self.repo_edit, hint="格式：用户名/仓库名")
         self._add_labeled_entry(
             grid,
@@ -465,9 +477,11 @@ class GamesCloudSaveApp(QMainWindow):
             browse_callback=self.pick_directory,
             extra_button=self.open_save_folder_button,
         )
-        grid.addWidget(self.config_path_label, 4, 0, 1, 2)
-        grid.addWidget(self.view_config_button, 4, 2)
+        self._add_labeled_entry(grid, 4, "云端方式", self.provider_combo)
+        grid.addWidget(self.config_path_label, 5, 0, 1, 2)
+        grid.addWidget(self.view_config_button, 5, 2)
         self._refresh_open_save_folder_button_state()
+        self._refresh_provider_ui()
 
         action_row = QHBoxLayout()
         self.save_settings_button = QPushButton("保存设置")
@@ -847,6 +861,12 @@ class GamesCloudSaveApp(QMainWindow):
     def _token(self) -> str:
         return self.token_edit.text().strip()
 
+    def _provider_type(self) -> str:
+        return str(self.provider_combo.currentData() or "github").strip().lower()
+
+    def _provider_name(self) -> str:
+        return provider_display_name(self._provider_type())
+
     def _repo(self) -> str:
         return self.repo_edit.text().strip()
 
@@ -865,6 +885,15 @@ class GamesCloudSaveApp(QMainWindow):
     def _remote_zip_path(self) -> str:
         return self._ensure_game_remote_zip_path(self._current_game())
 
+    def _refresh_provider_ui(self) -> None:
+        provider_name = self._provider_name()
+        self.token_edit.setPlaceholderText(f"填写 {provider_name} Token")
+        self.repo_edit.setPlaceholderText("用户名/仓库名")
+        self.provider_combo.setToolTip(f"当前云端方式：{provider_name}")
+
+    def _on_provider_changed(self, _index: int) -> None:
+        self._refresh_provider_ui()
+
     def _ensure_game_remote_zip_path(self, game: dict) -> str:
         remote_zip_path = str(game.get("remote_zip_path", "")).strip()
         if not remote_zip_path:
@@ -873,8 +902,9 @@ class GamesCloudSaveApp(QMainWindow):
         return remote_zip_path
 
     def _normalize_config(self, saved: dict) -> dict:
+        provider_type = provider_type_from_config(saved)
         token = str(saved.get("token", ""))
-        repo = str(saved.get("repo", ""))
+        repo = normalized_repo_name(saved)
         branch = "main"
 
         games_raw = saved.get("games")
@@ -935,6 +965,7 @@ class GamesCloudSaveApp(QMainWindow):
             current_game_id = games[0]["id"]
 
         return {
+            "provider_type": provider_type,
             "token": token,
             "repo": repo,
             "branch": branch,
@@ -995,6 +1026,7 @@ class GamesCloudSaveApp(QMainWindow):
             self.refresh_remote_info()
 
     def _sync_global_config_from_ui(self) -> None:
+        self.config_data["provider_type"] = self._provider_type()
         self.config_data["token"] = self._token()
         self.config_data["repo"] = self._repo()
         self.config_data["branch"] = "main"
@@ -1101,7 +1133,7 @@ class GamesCloudSaveApp(QMainWindow):
             return
         missing: list[str] = []
         if not self._token():
-            missing.append("GitHub Token")
+            missing.append(f"{self._provider_name()} Token")
         if not self._repo() or "/" not in self._repo():
             missing.append("仓库名")
         emulator_path = str(game.get("emulator_path", "")).strip()
@@ -1508,7 +1540,7 @@ class GamesCloudSaveApp(QMainWindow):
 
         self._save_config()
         self.set_busy(True)
-        self.set_progress(0, "正在读取 GitHub 云端存档信息...")
+        self.set_progress(0, f"正在读取 {self._provider_name()} 云端存档信息...")
         self.append_log("开始读取云端存档信息。")
         self.worker_thread = threading.Thread(target=self._refresh_remote_worker, daemon=True)
         self.worker_thread.start()
@@ -1524,9 +1556,9 @@ class GamesCloudSaveApp(QMainWindow):
         self.refresh_local_info()
         self._show_compare_popup("upload")
 
-        self._show_progress_dialog("上传进度", "准备上传本地存档到 GitHub...")
+        self._show_progress_dialog("上传进度", f"准备上传本地存档到 {self._provider_name()}...")
         self.set_busy(True)
-        self.set_progress(0, "准备上传本地存档到 GitHub...")
+        self.set_progress(0, f"准备上传本地存档到 {self._provider_name()}...")
         self.append_log("开始上传流程。")
         self.worker_thread = threading.Thread(target=self._upload_worker, daemon=True)
         self.worker_thread.start()
@@ -1541,9 +1573,9 @@ class GamesCloudSaveApp(QMainWindow):
         self._save_config()
         self._show_compare_popup("download")
         mode_text = "备份本地存档后覆盖"
-        self._show_progress_dialog("下载进度", f"准备从 GitHub 下载存档，当前模式：{mode_text}...")
+        self._show_progress_dialog("下载进度", f"准备从 {self._provider_name()} 下载存档，当前模式：{mode_text}...")
         self.set_busy(True)
-        self.set_progress(0, f"准备从 GitHub 下载存档，当前模式：{mode_text}...")
+        self.set_progress(0, f"准备从 {self._provider_name()} 下载存档，当前模式：{mode_text}...")
         self.append_log(f"开始下载流程，模式：{mode_text}。")
         self.worker_thread = threading.Thread(target=self._download_worker, daemon=True)
         self.worker_thread.start()
@@ -1555,7 +1587,7 @@ class GamesCloudSaveApp(QMainWindow):
 
         if not token:
             if show_message:
-                self._show_error("缺少 Token", "请先到设置页填写 GitHub Token。")
+                self._show_error("缺少 Token", f"请先到设置页填写 {self._provider_name()} Token。")
             return False
         if not repo or "/" not in repo:
             if show_message:
@@ -1605,7 +1637,7 @@ class GamesCloudSaveApp(QMainWindow):
                     if self.startup_remote_refresh:
                         self._show_warning(
                             "自动刷新失败",
-                            f"{payload}\n\n请检查网络连接和 GitHub 配置后重试。",
+                            f"{payload}\n\n请检查网络连接和 {self._provider_name()} 配置后重试。",
                         )
                     self.startup_remote_refresh = False
                 elif event_type == "done":
@@ -1659,7 +1691,7 @@ class GamesCloudSaveApp(QMainWindow):
 
     def _refresh_remote_worker(self) -> None:
         try:
-            self._emit_progress(20, "正在读取 GitHub 云端元数据...")
+            self._emit_progress(20, f"正在读取 {self._provider_name()} 云端元数据...")
             info = get_remote_info(self.config_data, self.current_game_id)
             self._emit_log("云端存档信息已刷新。")
             self._emit_remote_info(info)
