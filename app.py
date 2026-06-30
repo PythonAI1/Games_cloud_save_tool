@@ -40,6 +40,15 @@ from config import load_config, save_config
 from cloud_sync_service import download_game, get_remote_info, rollback_game, upload_game
 from constants import APP_DATA_DIR_NAME, CONFIG_FILE_NAME, DEFAULT_GAME_ID
 from providers import normalized_repo_name, provider_display_name, provider_type_from_config
+from save_dir_detector import (
+    SaveDirCandidate,
+    build_change_candidates,
+    build_reference_candidates,
+    collect_scan_roots,
+    diff_snapshots,
+    merge_candidates,
+    take_snapshot,
+)
 from utils import (
     default_device_name,
     format_size,
@@ -173,6 +182,184 @@ class TargetWindowSelectionDialog(QDialog):
         if current is None:
             return
         self.selected_window = current.data(Qt.UserRole)
+        self.accept()
+
+
+class SaveDirectoryDetectDialog(QDialog):
+    def __init__(self, parent: QWidget | None, game: dict) -> None:
+        super().__init__(parent)
+        self.setWindowTitle("检测存档目录")
+        self.setModal(True)
+        self.setMinimumWidth(820)
+        self.setMinimumHeight(520)
+        self.game = game
+        self.before_snapshot: dict | None = None
+        self.reference_candidates = build_reference_candidates(
+            str(game.get("game_root_path", "")),
+            str(game.get("emulator_path", "")),
+        )
+        self.selected_directory = ""
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(18, 16, 18, 16)
+        layout.setSpacing(10)
+
+        self.tip_label = QLabel(
+            "已根据当前模拟器/游戏路径列出常见可能的存档位置。\n"
+            "如果不确定，可以点击“启动游戏并检测变化文件”。"
+        )
+        self.tip_label.setWordWrap(True)
+        layout.addWidget(self.tip_label)
+
+        self.candidate_list = QListWidget()
+        self.candidate_list.setObjectName("SaveDirectoryCandidateList")
+        self.candidate_list.itemDoubleClicked.connect(lambda _item: self.use_selected_directory())
+        layout.addWidget(self.candidate_list, 1)
+
+        button_row = QHBoxLayout()
+        button_row.addStretch(1)
+        self.detect_button = QPushButton("启动游戏并检测变化文件")
+        self.analyze_button = QPushButton("分析变化文件")
+        self.browse_button = QPushButton("手动浏览")
+        self.use_button = QPushButton("使用选中目录")
+        self.cancel_button = QPushButton("取消")
+        self.analyze_button.setEnabled(False)
+        button_row.addWidget(self.detect_button)
+        button_row.addWidget(self.analyze_button)
+        button_row.addWidget(self.browse_button)
+        button_row.addWidget(self.use_button)
+        button_row.addWidget(self.cancel_button)
+        layout.addLayout(button_row)
+
+        self.detect_button.clicked.connect(self.start_game_change_detection)
+        self.analyze_button.clicked.connect(self.analyze_file_changes)
+        self.browse_button.clicked.connect(self.browse_directory)
+        self.use_button.clicked.connect(self.use_selected_directory)
+        self.cancel_button.clicked.connect(self.reject)
+
+        self.show_candidates(self.reference_candidates)
+
+    def show_candidates(self, candidates: list[SaveDirCandidate]) -> None:
+        self.candidate_list.clear()
+        if not candidates:
+            item = QListWidgetItem("未找到可参考的候选目录。可以点击“启动游戏并检测变化文件”或“手动浏览”。")
+            item.setData(Qt.UserRole, "")
+            self.candidate_list.addItem(item)
+            self.use_button.setEnabled(False)
+            return
+
+        for candidate in candidates[:50]:
+            status = "存在" if candidate.exists else "未找到"
+            changed_preview = ""
+            if candidate.changed_files:
+                names = [item.path.name for item in candidate.changed_files[:6]]
+                changed_preview = "\n变化文件：" + "、".join(names)
+            text = (
+                f"[{candidate.source}] [{status}] 可能性评分：{candidate.score}\n"
+                f"{candidate.folder}\n"
+                f"原因：{candidate.reason}"
+                f"{changed_preview}"
+            )
+            item = QListWidgetItem(text)
+            item.setData(Qt.UserRole, str(candidate.folder))
+            item.setToolTip(str(candidate.folder))
+            self.candidate_list.addItem(item)
+
+        self.candidate_list.setCurrentRow(0)
+        self.use_button.setEnabled(True)
+
+    def selected_save_dir(self) -> str:
+        return self.selected_directory
+
+    def start_game_change_detection(self) -> None:
+        emulator_path = str(self.game.get("emulator_path", "")).strip()
+        if not emulator_path or not Path(emulator_path).exists():
+            QMessageBox.warning(self, "无法启动", "模拟器/游戏路径不存在，请先选择正确的启动路径。")
+            return
+
+        QMessageBox.information(
+            self,
+            "检测流程",
+            "接下来会按以下流程检测：\n"
+            "1. 先扫描启动前文件状态；\n"
+            "2. 启动游戏；\n"
+            "3. 用户手动保存一次并关闭游戏；\n"
+            "4. 再扫描变化文件；\n"
+            "5. 把最像存档目录的候选项排前面。",
+        )
+
+        roots = collect_scan_roots(
+            str(self.game.get("game_root_path", "")),
+            emulator_path,
+        )
+        if not roots:
+            QMessageBox.warning(self, "无法检测", "没有找到可扫描的常见目录，请使用手动浏览。")
+            return
+
+        QApplication.setOverrideCursor(Qt.WaitCursor)
+        try:
+            self.before_snapshot = take_snapshot(roots)
+        finally:
+            QApplication.restoreOverrideCursor()
+
+        try:
+            if Path(emulator_path).suffix.lower() == ".lnk":
+                os.startfile(emulator_path)
+            else:
+                subprocess.Popen([emulator_path], close_fds=True)
+        except OSError as exc:
+            QMessageBox.warning(self, "启动失败", f"无法启动游戏：\n{exc}")
+            return
+
+        self.analyze_button.setEnabled(True)
+        self.tip_label.setText(
+            "已完成启动前扫描并启动游戏。\n"
+            "请在游戏中手动保存一次，关闭游戏后点击“分析变化文件”。"
+        )
+
+    def analyze_file_changes(self) -> None:
+        if self.before_snapshot is None:
+            QMessageBox.warning(self, "尚未开始", "请先点击“启动游戏并检测变化文件”。")
+            return
+
+        roots = collect_scan_roots(
+            str(self.game.get("game_root_path", "")),
+            str(self.game.get("emulator_path", "")),
+        )
+        QApplication.setOverrideCursor(Qt.WaitCursor)
+        try:
+            after_snapshot = take_snapshot(roots)
+            changes = diff_snapshots(self.before_snapshot, after_snapshot)
+            change_candidates = build_change_candidates(changes)
+            merged = merge_candidates(change_candidates, self.reference_candidates)
+        finally:
+            QApplication.restoreOverrideCursor()
+
+        self.show_candidates(merged)
+        if change_candidates:
+            self.tip_label.setText("已分析变化文件，实际发生变化且最像存档目录的候选项已排在前面。")
+        else:
+            self.tip_label.setText("没有检测到明显文件变化。可以重新检测，或使用规则参考/手动浏览。")
+
+    def browse_directory(self) -> None:
+        selected = QFileDialog.getExistingDirectory(self, "选择存档文件夹", str(Path.home()))
+        if not selected:
+            return
+        self.selected_directory = selected
+        self.accept()
+
+    def use_selected_directory(self) -> None:
+        current = self.candidate_list.currentItem()
+        if current is None:
+            return
+        selected = str(current.data(Qt.UserRole) or "").strip()
+        if not selected:
+            return
+        path = Path(selected)
+        if not path.exists() or not path.is_dir():
+            QMessageBox.warning(self, "目录不存在", f"选中的目录不存在，不能直接作为存档目录：\n{path}")
+            return
+        self.selected_directory = str(path)
         self.accept()
 
 
@@ -438,6 +625,8 @@ class GamesCloudSaveApp(QMainWindow):
         self.save_path_label.setWordWrap(True)
         self.open_save_folder_button = QPushButton("打开存档文件夹")
         self.open_save_folder_button.clicked.connect(self.open_save_folder)
+        self.detect_save_folder_button = QPushButton("检测存档目录")
+        self.detect_save_folder_button.clicked.connect(self.detect_save_directory)
         self.view_config_button = QPushButton("打开配置文件所在位置")
         self.view_config_button.clicked.connect(self.open_config_file)
         self.target_window_label = QLabel("")
@@ -505,7 +694,7 @@ class GamesCloudSaveApp(QMainWindow):
             "存档所在目录",
             self.game_root_edit,
             browse_callback=self.pick_directory,
-            extra_button=self.open_save_folder_button,
+            extra_buttons=[self.open_save_folder_button, self.detect_save_folder_button],
         )
         self._add_labeled_entry(game_grid, 3, "模拟器/游戏路径", self.emulator_path_edit, browse_callback=self.pick_emulator)
         self._add_labeled_entry(
@@ -533,6 +722,7 @@ class GamesCloudSaveApp(QMainWindow):
         hint: str | None = None,
         browse_callback=None,
         extra_button: QPushButton | None = None,
+        extra_buttons: list[QPushButton] | None = None,
     ) -> None:
         layout.addWidget(QLabel(label), row, 0)
         layout.addWidget(widget, row, 1)
@@ -554,6 +744,8 @@ class GamesCloudSaveApp(QMainWindow):
             button_row.addWidget(button)
         if extra_button:
             button_row.addWidget(extra_button)
+        for button in extra_buttons or []:
+            button_row.addWidget(button)
         button_row.addStretch(1)
         if stack_buttons:
             right.addLayout(button_row)
@@ -1297,6 +1489,22 @@ class GamesCloudSaveApp(QMainWindow):
 
     def pick_directory(self) -> None:
         selected = QFileDialog.getExistingDirectory(self, "选择存档文件夹", self._save_path() or self._game_root() or str(self.script_dir))
+        if not selected:
+            return
+
+        self.game_root_edit.setText(selected)
+        self.save_path_label.setText(selected)
+        self._refresh_open_save_folder_button_state()
+        self._save_config()
+        self.refresh_local_info()
+        self._show_info("已选择", f"已选择存档文件夹：\n{selected}")
+
+    def detect_save_directory(self) -> None:
+        self._update_current_game_from_ui()
+        dialog = SaveDirectoryDetectDialog(self, self._current_game())
+        if dialog.exec_() != QDialog.Accepted:
+            return
+        selected = dialog.selected_save_dir()
         if not selected:
             return
 
