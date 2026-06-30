@@ -283,25 +283,6 @@ class GamesCloudSaveApp(QMainWindow):
         header_layout.addWidget(title)
         header_layout.addWidget(self.status_label)
 
-        game_row = QHBoxLayout()
-        game_row.setSpacing(10)
-        game_row.addWidget(QLabel("当前游戏"))
-        self.game_selector = QComboBox()
-        self.game_selector.setObjectName("GameSelector")
-        self.game_selector.setToolTip("点击此处切换当前游戏")
-        self.game_selector.setCursor(Qt.PointingHandCursor)
-        self.game_selector.currentIndexChanged.connect(self._on_game_selection_changed)
-        game_row.addWidget(self.game_selector, 1)
-        self.add_game_button = QPushButton("新增游戏配置")
-        self.add_game_button.clicked.connect(self.add_game)
-        self.rename_game_button = QPushButton("重命名")
-        self.rename_game_button.clicked.connect(self.rename_current_game)
-        self.delete_game_button = QPushButton("删除游戏配置")
-        self.delete_game_button.clicked.connect(self.delete_current_game)
-        game_row.addWidget(self.add_game_button)
-        game_row.addWidget(self.rename_game_button)
-        game_row.addWidget(self.delete_game_button)
-        header_layout.addLayout(game_row)
         root_layout.addWidget(header_card)
 
         self.notebook = QTabWidget()
@@ -310,16 +291,16 @@ class GamesCloudSaveApp(QMainWindow):
 
         self.overview_tab = QWidget()
         self.settings_tab = QWidget()
-        self.launcher_tab = QWidget()
         self.notebook.addTab(self.overview_tab, "概览")
         self.notebook.addTab(self.settings_tab, "设置")
-        self.notebook.addTab(self.launcher_tab, "快捷存档游戏启动器")
 
         self._build_overview_tab()
         self._build_settings_tab(provider_type, token, repo, emulator_path, game_root, save_path)
-        self._build_launcher_tab()
         self._populate_game_selector(games, current_game_id)
         self._refresh_target_window_label()
+        self.log_text = QPlainTextEdit()
+        self.log_text.setReadOnly(True)
+        self.log_text.hide()
         self._fit_window_to_content()
 
     def _build_overview_tab(self) -> None:
@@ -414,9 +395,9 @@ class GamesCloudSaveApp(QMainWindow):
         outer.setSpacing(page_spacing)
         outer.setAlignment(Qt.AlignTop)
 
-        card = self._card()
-        outer.addWidget(card, 0, Qt.AlignTop)
-        grid = QGridLayout(card)
+        cloud_card = self._card()
+        outer.addWidget(cloud_card, 0, Qt.AlignTop)
+        grid = QGridLayout(cloud_card)
         spacing = 6 if self.ultra_compact_dpi_layout else (8 if self.compact_dpi_layout else 12)
         margin = 8 if self.ultra_compact_dpi_layout else (12 if self.compact_dpi_layout else 18)
         grid.setContentsMargins(margin, margin, margin, margin)
@@ -456,10 +437,7 @@ class GamesCloudSaveApp(QMainWindow):
         self.save_path_label.setWordWrap(True)
         self.open_save_folder_button = QPushButton("打开存档文件夹")
         self.open_save_folder_button.clicked.connect(self.open_save_folder)
-        self.config_path_label = QLabel(f"配置保存在：{self.config_path}")
-        self.config_path_label.setWordWrap(True)
-        self.config_path_label.setObjectName("SecondaryLabel")
-        self.view_config_button = QPushButton("查看配置")
+        self.view_config_button = QPushButton("打开配置文件所在位置")
         self.view_config_button.clicked.connect(self.open_config_file)
         self.target_window_label = QLabel("")
         self.target_window_label.setWordWrap(True)
@@ -467,21 +445,81 @@ class GamesCloudSaveApp(QMainWindow):
         self.capture_window_button = QPushButton("选择目标窗口")
         self.capture_window_button.clicked.connect(self.start_target_window_capture)
 
-        self._add_labeled_entry(grid, 1, "访问令牌", self.token_edit)
-        self._add_labeled_entry(grid, 2, "仓库名", self.repo_edit, hint="格式：用户名/仓库名")
+        self.game_selector = QComboBox()
+        self.game_selector.setObjectName("GameSelector")
+        self.game_selector.setToolTip("点击此处切换当前游戏")
+        self.game_selector.setCursor(Qt.PointingHandCursor)
+        self.game_selector.currentIndexChanged.connect(self._on_game_selection_changed)
+        self.add_game_button = QPushButton("新增游戏配置")
+        self.add_game_button.clicked.connect(self.add_game)
+        self.rename_game_button = QPushButton("重命名")
+        self.rename_game_button.clicked.connect(self.rename_current_game)
+        self.delete_game_button = QPushButton("删除游戏配置")
+        self.delete_game_button.clicked.connect(self.delete_current_game)
+        self.create_launcher_shortcut_button = QPushButton("创建此游戏云存档启动器至桌面")
+        self.create_launcher_shortcut_button.clicked.connect(self.create_current_game_launcher_shortcut)
+
+        self._add_labeled_entry(grid, 1, "云端方式", self.provider_combo)
+        self._add_labeled_entry(grid, 2, "访问令牌", self.token_edit)
+        self._add_labeled_entry(grid, 3, "仓库名", self.repo_edit, hint="格式：用户名/仓库名")
+        config_button_row = QHBoxLayout()
+        config_button_row.addStretch(1)
+        config_button_row.addWidget(self.view_config_button)
+        config_holder = QWidget()
+        config_holder.setLayout(config_button_row)
+        grid.addWidget(config_holder, 4, 0, 1, 3)
+        self._refresh_open_save_folder_button_state()
+        self._refresh_provider_ui()
+
+        game_card = self._card()
+        outer.addWidget(game_card, 0, Qt.AlignTop)
+        game_grid = QGridLayout(game_card)
+        game_grid.setContentsMargins(margin, margin, margin, margin)
+        game_grid.setHorizontalSpacing(spacing)
+        game_grid.setVerticalSpacing(spacing)
+        game_grid.setColumnStretch(0, 0)
+        game_grid.setColumnStretch(1, 1)
+        game_grid.setColumnStretch(2, 1)
+        game_grid.setColumnMinimumWidth(0, self.fontMetrics().horizontalAdvance("模拟器/游戏路径") + 18)
+
+        game_intro = QLabel("游戏设置")
+        game_intro.setWordWrap(True)
+        game_intro.setObjectName("SecondaryLabel")
+        game_grid.addWidget(game_intro, 0, 0, 1, 3)
+
+        game_row_widget = QWidget()
+        game_row = QHBoxLayout(game_row_widget)
+        game_row.setContentsMargins(0, 0, 0, 0)
+        game_row.setSpacing(10)
+        game_row.addWidget(self.game_selector, 1)
+        game_row.addWidget(self.add_game_button)
+        game_row.addWidget(self.rename_game_button)
+        game_row.addWidget(self.delete_game_button)
+        game_grid.addWidget(QLabel("当前游戏"), 1, 0)
+        game_grid.addWidget(game_row_widget, 1, 1, 1, 2)
+
         self._add_labeled_entry(
-            grid,
-            3,
+            game_grid,
+            2,
             "存档所在目录",
             self.game_root_edit,
             browse_callback=self.pick_directory,
             extra_button=self.open_save_folder_button,
         )
-        self._add_labeled_entry(grid, 4, "云端方式", self.provider_combo)
-        grid.addWidget(self.config_path_label, 5, 0, 1, 2)
-        grid.addWidget(self.view_config_button, 5, 2)
-        self._refresh_open_save_folder_button_state()
-        self._refresh_provider_ui()
+        self._add_labeled_entry(game_grid, 3, "模拟器/游戏路径", self.emulator_path_edit, browse_callback=self.pick_emulator)
+        self._add_labeled_entry(
+            game_grid,
+            4,
+            "目标窗口",
+            self.target_window_label,
+            hint="点击后从当前正在运行的窗口列表中选择要监控关闭的目标窗口",
+            extra_button=self.capture_window_button,
+        )
+        launcher_row = QHBoxLayout()
+        launcher_row.addWidget(self.create_launcher_shortcut_button)
+        launcher_holder = QWidget()
+        launcher_holder.setLayout(launcher_row)
+        game_grid.addWidget(launcher_holder, 5, 0, 1, 3)
 
         action_row = QHBoxLayout()
         self.save_settings_button = QPushButton("保存设置")
@@ -1115,9 +1153,13 @@ class GamesCloudSaveApp(QMainWindow):
             self._show_error("打开失败", f"配置文件不存在且无法创建：\n{self.config_path}")
             return
         try:
-            os.startfile(str(self.config_path))
+            subprocess.run(
+                ["explorer.exe", "/select,", str(self.config_path)],
+                check=False,
+                creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
+            )
         except OSError as exc:
-            self._show_error("打开失败", f"无法打开配置文件：\n{exc}")
+            self._show_error("打开失败", f"无法打开配置文件所在位置：\n{exc}")
 
     def create_current_game_launcher_shortcut(self) -> None:
         if not self._save_config():
