@@ -521,11 +521,6 @@ class GamesCloudSaveApp(QMainWindow):
         launcher_holder.setLayout(launcher_row)
         game_grid.addWidget(launcher_holder, 5, 0, 1, 3)
 
-        action_row = QHBoxLayout()
-        self.save_settings_button = QPushButton("保存设置")
-        self.save_settings_button.clicked.connect(self.save_settings_and_notify)
-        action_row.addWidget(self.save_settings_button)
-        outer.addLayout(action_row, 0)
         outer.addSpacing(4 if self.ultra_compact_dpi_layout else 8)
 
     def _add_labeled_entry(
@@ -719,8 +714,21 @@ class GamesCloudSaveApp(QMainWindow):
                 background: #ffffff;
             }
             QComboBox::drop-down {
-                border: none;
-                width: 30px;
+                width: 38px;
+                subcontrol-origin: padding;
+                subcontrol-position: top right;
+                border-left: 1px solid #c4d4e5;
+                border-top-right-radius: 12px;
+                border-bottom-right-radius: 12px;
+                background: #eef4fa;
+            }
+            QComboBox::down-arrow {
+                image: url(COMBO_ARROW_PATH);
+                width: 14px;
+                height: 14px;
+            }
+            QComboBox:hover::drop-down {
+                background: #e2edf6;
             }
             QComboBox#GameSelector {
                 border: 1px solid #9aa8b5;
