@@ -335,7 +335,8 @@ class SaveDirectoryDetectDialog(QDialog):
         self.analyze_button.setEnabled(True)
         self.tip_label.setText(
             "已完成启动前扫描并启动游戏。\n"
-            "请在游戏中手动保存一次，关闭游戏后点击“分析变化文件”。"
+            "请到游戏中手动保存一次，然后关闭游戏。\n"
+            "保存并关闭后，回到此窗口点击“分析变化文件”。"
         )
 
     def analyze_file_changes(self) -> None:
