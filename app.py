@@ -43,6 +43,7 @@ from providers import normalized_repo_name, provider_display_name, provider_type
 from save_dir_detector import (
     SaveDirCandidate,
     build_change_candidates,
+    build_game_keywords,
     build_reference_candidates,
     collect_scan_roots,
     diff_snapshots,
@@ -194,9 +195,18 @@ class SaveDirectoryDetectDialog(QDialog):
         self.setMinimumHeight(520)
         self.game = game
         self.before_snapshot: dict | None = None
+        target_window = game.get("target_window") if isinstance(game.get("target_window"), dict) else {}
+        self.game_keywords = build_game_keywords(
+            str(game.get("name", "")),
+            str(game.get("emulator_path", "")),
+            str(game.get("game_root_path", "")),
+            str(target_window.get("title_keyword", "")),
+        )
         self.reference_candidates = build_reference_candidates(
             str(game.get("game_root_path", "")),
             str(game.get("emulator_path", "")),
+            str(game.get("name", "")),
+            str(target_window.get("title_keyword", "")),
         )
         self.selected_directory = ""
 
@@ -338,7 +348,7 @@ class SaveDirectoryDetectDialog(QDialog):
         try:
             after_snapshot = take_snapshot(roots)
             changes = diff_snapshots(self.before_snapshot, after_snapshot)
-            change_candidates = build_change_candidates(changes)
+            change_candidates = build_change_candidates(changes, self.game_keywords)
             merged = merge_candidates(change_candidates, self.reference_candidates)
         finally:
             QApplication.restoreOverrideCursor()

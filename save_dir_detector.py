@@ -1,4 +1,5 @@
 import os
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -57,6 +58,51 @@ SKIP_DIR_NAMES = BAD_NAME_HINTS | {
     "windows",
     "program files",
     "program files (x86)",
+}
+
+GENERIC_GAME_KEYWORDS = {
+    "game",
+    "games",
+    "save",
+    "saves",
+    "savedata",
+    "save_data",
+    "saved",
+    "data",
+    "user",
+    "profile",
+    "slot",
+    "launcher",
+    "emulator",
+    "emu",
+    "exe",
+    "steam",
+    "epic",
+    "gog",
+    "xbox",
+    "windows",
+    "program",
+    "files",
+    "appdata",
+    "local",
+    "locallow",
+    "roaming",
+    "documents",
+    "desktop",
+}
+
+EMULATOR_EXECUTABLE_NAMES = {
+    "cemu",
+    "ryujinx",
+    "yuzu",
+    "suyu",
+    "pcsx2",
+    "pcsx2-qt",
+    "rpcs3",
+    "ppsspp",
+    "ppssppwindows64",
+    "dolphin",
+    "retroarch",
 }
 
 KNOWN_SAVE_LOCATION_RULES = [
@@ -174,6 +220,8 @@ class SaveDirCandidate:
     reason: str
     source: str
     exists: bool
+    keyword_score: int = 0
+    matched_keywords: list[str] = field(default_factory=list)
     changed_files: list[ChangedFile] = field(default_factory=list)
 
 
@@ -220,10 +268,63 @@ def _candidate_key(path: Path) -> str:
     return str(path).casefold()
 
 
-def build_reference_candidates(game_root: str, emulator_path: str) -> list[SaveDirCandidate]:
+def _split_keywords(value: str) -> set[str]:
+    keywords: set[str] = set()
+    for token in re.findall(r"[0-9A-Za-z\u4e00-\u9fff]+", value.casefold()):
+        if len(token) < 2:
+            continue
+        if token in GENERIC_GAME_KEYWORDS or token in EMULATOR_EXECUTABLE_NAMES:
+            continue
+        keywords.add(token)
+    return keywords
+
+
+def build_game_keywords(game_name: str, emulator_path: str, game_root: str, target_title: str = "") -> set[str]:
+    keywords: set[str] = set()
+    keywords.update(_split_keywords(game_name))
+    keywords.update(_split_keywords(target_title))
+
+    for raw_path in (game_root, emulator_path):
+        if not raw_path:
+            continue
+        path = Path(raw_path)
+        parts = list(path.parts)
+        if path.suffix:
+            parts.append(path.stem)
+        for part in parts[-4:]:
+            keywords.update(_split_keywords(part))
+
+    return keywords
+
+
+def apply_game_keyword_boost(candidates: list[SaveDirCandidate], game_keywords: set[str], boost: int) -> list[SaveDirCandidate]:
+    if not game_keywords:
+        return candidates
+
+    for candidate in candidates:
+        path_text = str(candidate.folder).casefold()
+        matched = sorted(keyword for keyword in game_keywords if keyword in path_text)
+        if not matched:
+            continue
+        candidate.keyword_score = min(boost, 20 + 10 * len(matched))
+        candidate.score += candidate.keyword_score
+        candidate.matched_keywords = matched
+        candidate.reason = f"{candidate.reason}；路径包含游戏相关关键词：{', '.join(matched[:5])}"
+
+    candidates.sort(key=lambda item: item.score, reverse=True)
+    return candidates
+
+
+def build_reference_candidates(
+    game_root: str,
+    emulator_path: str,
+    game_name: str = "",
+    target_title: str = "",
+) -> list[SaveDirCandidate]:
     context = build_path_context(game_root, emulator_path)
     executable_name = Path(emulator_path).name.casefold() if emulator_path else ""
     candidates: dict[str, SaveDirCandidate] = {}
+    game_keywords = build_game_keywords(game_name, emulator_path, game_root, target_title)
 
     for rule in KNOWN_SAVE_LOCATION_RULES:
         matches = {item.casefold() for item in rule["match"]}
@@ -254,6 +355,7 @@ def build_reference_candidates(game_root: str, emulator_path: str) -> list[SaveD
                 candidates[key] = candidate
 
     result = list(candidates.values())
+    apply_game_keyword_boost(result, game_keywords, boost=70)
     result.sort(key=lambda item: (item.score, item.exists), reverse=True)
     return result
 
@@ -316,7 +418,7 @@ def diff_snapshots(before: dict[str, FileState], after: dict[str, FileState]) ->
     return changes
 
 
-def build_change_candidates(changes: list[ChangedFile]) -> list[SaveDirCandidate]:
+def build_change_candidates(changes: list[ChangedFile], game_keywords: set[str] | None = None) -> list[SaveDirCandidate]:
     grouped: dict[Path, list[ChangedFile]] = {}
     for change in changes:
         grouped.setdefault(change.path.parent, []).append(change)
@@ -359,6 +461,7 @@ def build_change_candidates(changes: list[ChangedFile]) -> list[SaveDirCandidate
             )
         )
 
+    apply_game_keyword_boost(candidates, game_keywords or set(), boost=45)
     candidates.sort(key=lambda item: item.score, reverse=True)
     return candidates
 
