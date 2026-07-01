@@ -27,6 +27,8 @@ WEAK_SAVE_EXTENSIONS = {
 SAVE_FEATURE_FILE_NAMES = {
     "user.dat",
     "account.dat",
+    "sav.dat",
+    "save.dat",
     "game_data",
     "gamedata",
     "progress",
@@ -435,7 +437,9 @@ def _file_has_save_feature(path: Path) -> bool:
         return True
     if name in SAVE_FEATURE_FILE_NAMES or stem in SAVE_FEATURE_FILE_NAMES:
         return True
-    return any(token in name for token in ("savedata", "game_data", "gamedata", "progress", "checkpoint"))
+    if path.suffix.casefold() in WEAK_SAVE_EXTENSIONS:
+        return any(token in name for token in ("savedata", "game_data", "gamedata", "progress", "checkpoint"))
+    return False
 
 
 def _direct_save_file_count(folder: Path, max_files: int = 200) -> int:
@@ -459,6 +463,27 @@ def _child_id_dirs_with_save_files(folder: Path) -> list[Path]:
     result: list[Path] = []
     try:
         children = [item for item in folder.iterdir() if item.is_dir() and _looks_like_id_directory(item)]
+    except OSError:
+        return result
+    for child in children:
+        if _direct_save_file_count(child) > 0:
+            result.append(child)
+    return result
+
+
+def _looks_like_save_slot_directory(path: Path) -> bool:
+    if _looks_like_id_directory(path):
+        return True
+    name = _normalized_terminal_name(path)
+    if _terminal_save_hint_score(path, has_game_keyword=True)[0] >= 12:
+        return True
+    return bool(re.fullmatch(r"(auto|manual|quick)?save\d+", name))
+
+
+def _child_save_slot_dirs_with_save_files(folder: Path) -> list[Path]:
+    result: list[Path] = []
+    try:
+        children = [item for item in folder.iterdir() if item.is_dir() and _looks_like_save_slot_directory(item)]
     except OSError:
         return result
     for child in children:
@@ -670,9 +695,10 @@ def _add_keyword_tree_save_candidates(
         save_hint_score = _terminal_save_hint_score(folder, has_game_keyword=True)[0]
         direct_save_files = _direct_save_file_count(folder)
         child_save_id_dirs = _child_id_dirs_with_save_files(folder)
+        child_save_slot_dirs = _child_save_slot_dirs_with_save_files(folder)
 
-        if len(child_save_id_dirs) >= 2:
-            reason = "多个同级 ID 子目录包含存档特征文件，推荐父目录避免遗漏账号或槽位"
+        if len(child_save_slot_dirs) >= 2:
+            reason = "多个同级 ID 或存档槽位子目录包含存档特征文件，推荐父目录避免遗漏账号或槽位"
             _add_candidate(candidates, folder, base_score + 125, source, reason)
             added += 1
             continue
@@ -1013,6 +1039,62 @@ def diff_snapshots(before: dict[str, FileState], after: dict[str, FileState]) ->
     return changes
 
 
+def _changed_files_have_save_feature(files: list[ChangedFile]) -> bool:
+    return any(_file_has_save_feature(item.path) for item in files)
+
+
+def _collect_changed_slot_parent_candidates(
+    grouped: dict[Path, list[ChangedFile]],
+) -> list[SaveDirCandidate]:
+    parent_to_changed_slot_dirs: dict[Path, list[Path]] = {}
+    changed_files_by_slot_dir: dict[Path, list[ChangedFile]] = {}
+
+    for folder, files in grouped.items():
+        if not _looks_like_save_slot_directory(folder) or not _changed_files_have_save_feature(files):
+            continue
+        parent_to_changed_slot_dirs.setdefault(folder.parent, []).append(folder)
+        changed_files_by_slot_dir[folder] = files
+
+    candidates: list[SaveDirCandidate] = []
+    for parent, changed_slot_dirs in parent_to_changed_slot_dirs.items():
+        sibling_slot_dirs_with_save_files = _child_save_slot_dirs_with_save_files(parent)
+        sibling_keys = {_candidate_key(folder) for folder in sibling_slot_dirs_with_save_files}
+        changed_keys = {_candidate_key(folder) for folder in changed_slot_dirs}
+        all_evidence_slot_dirs = sibling_keys | changed_keys
+        changed_files = [
+            changed_file
+            for folder in changed_slot_dirs
+            for changed_file in changed_files_by_slot_dir.get(folder, [])
+        ]
+
+        if len(all_evidence_slot_dirs) >= 2:
+            candidates.append(
+                SaveDirCandidate(
+                    folder=parent,
+                    score=230,
+                    reason="多个同级 ID 或存档槽位目录发生变化或包含强存档文件，推荐父目录避免遗漏账号或槽位",
+                    source="变化检测",
+                    exists=parent.exists() and parent.is_dir(),
+                    changed_files=changed_files,
+                )
+            )
+            continue
+
+        folder = changed_slot_dirs[0]
+        candidates.append(
+            SaveDirCandidate(
+                folder=folder,
+                score=220,
+                reason="ID 或存档槽位目录中检测到强存档文件变化，推荐实际存档目录",
+                source="变化检测",
+                exists=folder.exists() and folder.is_dir(),
+                changed_files=changed_files_by_slot_dir.get(folder, []),
+            )
+        )
+
+    return candidates
+
+
 def build_change_candidates(
     changes: list[ChangedFile],
     game_keywords: set[str] | None = None,
@@ -1022,7 +1104,7 @@ def build_change_candidates(
     for change in changes:
         grouped.setdefault(change.path.parent, []).append(change)
 
-    candidates: list[SaveDirCandidate] = []
+    candidates: dict[str, SaveDirCandidate] = {}
     game_keywords = game_keywords or set()
     for folder, files in grouped.items():
         file_names = [item.path.name.casefold() for item in files]
@@ -1088,20 +1170,26 @@ def build_change_candidates(
             score -= 8
             reasons.append("包含配置类文件")
 
-        candidates.append(
-            SaveDirCandidate(
-                folder=folder,
-                score=score,
-                reason="；".join(reasons),
-                source="变化检测",
-                exists=folder.exists() and folder.is_dir(),
-                changed_files=files,
-            )
+        candidate = SaveDirCandidate(
+            folder=folder,
+            score=score,
+            reason="；".join(reasons),
+            source="变化检测",
+            exists=folder.exists() and folder.is_dir(),
+            changed_files=files,
         )
+        candidates[_candidate_key(folder)] = candidate
 
-    apply_game_keyword_boost(candidates, game_keywords or set(), boost=80)
-    candidates.sort(key=lambda item: item.score, reverse=True)
-    return candidates
+    for candidate in _collect_changed_slot_parent_candidates(grouped):
+        key = _candidate_key(candidate.folder)
+        previous = candidates.get(key)
+        if previous is None or candidate.score > previous.score:
+            candidates[key] = candidate
+
+    result = list(candidates.values())
+    apply_game_keyword_boost(result, game_keywords or set(), boost=80)
+    result.sort(key=lambda item: item.score, reverse=True)
+    return result
 
 
 def merge_candidates(*groups: list[SaveDirCandidate]) -> list[SaveDirCandidate]:
