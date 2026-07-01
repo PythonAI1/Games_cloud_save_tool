@@ -643,11 +643,6 @@ class GamesCloudSaveApp(QMainWindow):
         grid.setColumnStretch(2, 1)
         grid.setColumnMinimumWidth(0, self.fontMetrics().horizontalAdvance("模拟器/游戏路径") + 18)
 
-        intro = QLabel("本地及云端设置")
-        intro.setWordWrap(True)
-        intro.setObjectName("SecondaryLabel")
-        grid.addWidget(intro, 0, 0, 1, 3)
-
         self.provider_combo = QComboBox()
         self.provider_combo.addItem("GitHub", "github")
         self.provider_combo.addItem("Gitee", "gitee")
@@ -722,11 +717,6 @@ class GamesCloudSaveApp(QMainWindow):
         game_grid.setColumnStretch(1, 1)
         game_grid.setColumnStretch(2, 1)
         game_grid.setColumnMinimumWidth(0, self.fontMetrics().horizontalAdvance("模拟器/游戏路径") + 18)
-
-        game_intro = QLabel("游戏设置")
-        game_intro.setWordWrap(True)
-        game_intro.setObjectName("SecondaryLabel")
-        game_grid.addWidget(game_intro, 0, 0, 1, 3)
 
         game_row_widget = QWidget()
         game_row = QHBoxLayout(game_row_widget)
