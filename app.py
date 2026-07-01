@@ -524,8 +524,10 @@ class GamesCloudSaveApp(QMainWindow):
 
         self.overview_tab = QWidget()
         self.settings_tab = QWidget()
+        self.game_settings_tab = QWidget()
         self.notebook.addTab(self.overview_tab, "概览")
-        self.notebook.addTab(self.settings_tab, "设置")
+        self.notebook.addTab(self.settings_tab, "云仓库设置")
+        self.notebook.addTab(self.game_settings_tab, "游戏设置")
 
         self._build_overview_tab()
         self._build_settings_tab(provider_type, token, repo, emulator_path, game_root, save_path)
@@ -705,8 +707,13 @@ class GamesCloudSaveApp(QMainWindow):
         self._refresh_open_save_folder_button_state()
         self._refresh_provider_ui()
 
+        game_outer = QVBoxLayout(self.game_settings_tab)
+        game_outer.setContentsMargins(page_margin, page_margin, page_margin, page_margin)
+        game_outer.setSpacing(page_spacing)
+        game_outer.setAlignment(Qt.AlignTop)
+
         game_card = self._card()
-        outer.addWidget(game_card, 0, Qt.AlignTop)
+        game_outer.addWidget(game_card, 0, Qt.AlignTop)
         game_grid = QGridLayout(game_card)
         game_grid.setContentsMargins(margin, margin, margin, margin)
         game_grid.setHorizontalSpacing(spacing)
@@ -755,7 +762,7 @@ class GamesCloudSaveApp(QMainWindow):
         launcher_holder.setLayout(launcher_row)
         game_grid.addWidget(launcher_holder, 5, 0, 1, 3)
 
-        outer.addSpacing(4 if self.ultra_compact_dpi_layout else 8)
+        game_outer.addSpacing(4 if self.ultra_compact_dpi_layout else 8)
 
     def _add_labeled_entry(
         self,
