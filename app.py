@@ -352,7 +352,7 @@ class SaveDirectoryDetectDialog(QDialog):
         try:
             after_snapshot = take_snapshot(roots)
             changes = diff_snapshots(self.before_snapshot, after_snapshot)
-            change_candidates = build_change_candidates(changes, self.game_keywords)
+            change_candidates = build_change_candidates(changes, self.game_keywords, roots)
             merged = merge_candidates(change_candidates, self.reference_candidates)
         finally:
             QApplication.restoreOverrideCursor()

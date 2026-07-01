@@ -8,9 +8,6 @@ from pathlib import Path
 SAVE_EXTENSIONS = {
     ".sav",
     ".save",
-    ".dat",
-    ".bin",
-    ".db",
     ".slot",
     ".state",
     ".srm",
@@ -19,6 +16,12 @@ SAVE_EXTENSIONS = {
     ".rvdata",
     ".rvdata2",
     ".rxdata",
+}
+
+WEAK_SAVE_EXTENSIONS = {
+    ".dat",
+    ".bin",
+    ".db",
 }
 
 GOOD_NAME_HINTS = {
@@ -183,6 +186,19 @@ SAVE_DIR_NAME_HINTS = {
     "steam_settings",
     "settings",
 }
+
+TERMINAL_SAVE_HINT_SCORES = (
+    ("save/saves/savedata", 60, {"save", "saves", "savedata", "savegame", "savegames", "gamesaves"}),
+    ("profile/profiles", 45, {"profile", "profiles", "playerprofile", "playerprofiles"}),
+    ("userdata/user_data", 25, {"userdata", "user_data"}),
+    ("remote", 15, {"remote"}),
+    ("slot/slots", 15, {"slot", "slots"}),
+    ("checkpoint/checkpoints", 12, {"checkpoint", "checkpoints"}),
+    ("autosave/autosaves", 12, {"autosave", "autosaves"}),
+    ("settings/config", 5, {"settings", "config"}),
+)
+
+NO_GAME_KEYWORD_SCORE_CAP = 120
 
 GLOBAL_SEARCH_ROOT_NAMES = (
     "Games",
@@ -362,6 +378,96 @@ def _candidate_key(path: Path) -> str:
     return str(path).casefold()
 
 
+def _normalized_terminal_name(path: Path) -> str:
+    return re.sub(r"[\s_\-]+", "", path.name.casefold())
+
+
+def _terminal_save_hint_score(path: Path, has_game_keyword: bool) -> tuple[int, str]:
+    name = _normalized_terminal_name(path)
+    for label, score, hints in TERMINAL_SAVE_HINT_SCORES:
+        normalized_hints = {re.sub(r"[\s_\-]+", "", hint) for hint in hints}
+        if name not in normalized_hints and not any(name.startswith(hint) for hint in normalized_hints):
+            continue
+        if label == "profile/profiles" and not has_game_keyword:
+            return 10, "末端目录名像 profile，但未命中游戏关键词，降权处理"
+        if label == "settings/config" and not has_game_keyword:
+            return 0, ""
+        return score, f"末端目录名命中存档特征：{label}"
+    return 0, ""
+
+
+def _terminal_bad_hint_score(path: Path) -> tuple[int, str]:
+    name = _normalized_terminal_name(path)
+    if any(hint in name for hint in ("cache", "shader", "log", "temp", "tmp", "crash", "dump")):
+        return -80, "末端目录名像缓存、日志或崩溃目录"
+    if any(hint in name for hint in ("screenshot", "screenshots", "video", "videos", "replay", "replays")):
+        return -50, "末端目录名像截图、视频或回放目录"
+    return 0, ""
+
+
+def _is_relative_to(path: Path, parent: Path) -> bool:
+    try:
+        path.resolve().relative_to(parent.resolve())
+        return True
+    except (OSError, ValueError):
+        return False
+
+
+def _score_root_location(folder: Path, context: dict[str, str], emulator_path: str) -> tuple[int, str]:
+    for root in _game_install_roots(emulator_path):
+        if _is_relative_to(folder, root):
+            return 35, "位于游戏安装目录内或附近"
+
+    checks = (
+        ("saved_games", 25, "位于 Saved Games"),
+        ("documents", 30, "位于 Documents / My Games"),
+        ("localappdata", 20, "位于 AppData/Local"),
+        ("appdata", 18, "位于 AppData/Roaming"),
+        ("locallow", 18, "位于 AppData/LocalLow"),
+    )
+    for key, score, reason in checks:
+        value = context.get(key, "")
+        if value and _is_relative_to(folder, Path(value)):
+            return score, reason
+
+    path_text = str(folder).casefold().replace("/", "\\")
+    if "\\steam\\userdata\\" in path_text or "\\steam\\userdata" in path_text:
+        return 15, "位于 Steam userdata"
+    if "programdata" in path_text or "\\public\\" in path_text:
+        return 8, "位于 ProgramData 或 Public Documents"
+    return 0, ""
+
+
+def _score_relative_depth(folder: Path, context: dict[str, str], emulator_path: str) -> tuple[int, str]:
+    roots: list[Path] = _game_install_roots(emulator_path)
+    for key in ("saved_games", "documents", "localappdata", "appdata", "locallow"):
+        value = context.get(key, "")
+        if value:
+            roots.append(Path(value))
+
+    depths: list[int] = []
+    for root in roots:
+        try:
+            depths.append(len(folder.resolve().relative_to(root.resolve()).parts))
+        except (OSError, ValueError):
+            continue
+    if not depths:
+        return 0, ""
+    depth = min(depths)
+    if depth > 8:
+        return -20, "相对搜索根目录层级过深"
+    if depth > 6:
+        return -10, "相对搜索根目录层级略深"
+    return 0, ""
+
+
+def _matched_game_keywords(path: Path, game_keywords: set[str]) -> list[str]:
+    if not game_keywords:
+        return []
+    path_text = str(path).casefold()
+    return sorted(keyword for keyword in game_keywords if keyword in path_text)
+
+
 def _is_generic_game_keyword(token: str) -> bool:
     if token in GENERIC_GAME_KEYWORDS or token in EMULATOR_EXECUTABLE_NAMES:
         return True
@@ -423,11 +529,14 @@ def apply_game_keyword_boost(candidates: list[SaveDirCandidate], game_keywords: 
         return candidates
 
     for candidate in candidates:
-        path_text = str(candidate.folder).casefold()
-        matched = sorted(keyword for keyword in game_keywords if keyword in path_text)
+        matched = _matched_game_keywords(candidate.folder, game_keywords)
         if not matched:
             continue
-        candidate.keyword_score = min(boost, 20 + 10 * len(matched))
+        terminal_text = candidate.folder.name.casefold()
+        terminal_matched = [keyword for keyword in matched if keyword in terminal_text]
+        candidate.keyword_score = boost + min(30, max(0, len(matched) - 1) * 10)
+        if terminal_matched:
+            candidate.keyword_score += 30
         candidate.score += candidate.keyword_score
         candidate.matched_keywords = matched
         candidate.reason = f"{candidate.reason}；路径包含游戏相关关键词：{', '.join(matched[:5])}"
@@ -441,8 +550,7 @@ def _is_skipped_directory(path: Path) -> bool:
 
 
 def _path_has_save_hint(path: Path) -> bool:
-    name = path.name.casefold().replace("-", "_")
-    return any(hint == name or hint in name for hint in SAVE_DIR_NAME_HINTS)
+    return _terminal_save_hint_score(path, has_game_keyword=False)[0] > 0
 
 
 def _path_matches_keywords(path: Path, game_keywords: set[str]) -> bool:
@@ -472,6 +580,44 @@ def _add_candidate(
     previous = candidates.get(key)
     if previous is None or candidate.score > previous.score:
         candidates[key] = candidate
+
+
+def _apply_reference_scoring(
+    candidates: list[SaveDirCandidate],
+    context: dict[str, str],
+    emulator_path: str,
+    game_keywords: set[str],
+) -> list[SaveDirCandidate]:
+    apply_game_keyword_boost(candidates, game_keywords, boost=80)
+    for candidate in candidates:
+        has_game_keyword = bool(candidate.matched_keywords)
+
+        terminal_score, terminal_reason = _terminal_save_hint_score(candidate.folder, has_game_keyword)
+        if terminal_score:
+            candidate.score += terminal_score
+            candidate.reason = f"{candidate.reason}；{terminal_reason}"
+
+        root_score, root_reason = _score_root_location(candidate.folder, context, emulator_path)
+        if root_score:
+            candidate.score += root_score
+            candidate.reason = f"{candidate.reason}；{root_reason}"
+
+        depth_score, depth_reason = _score_relative_depth(candidate.folder, context, emulator_path)
+        if depth_score:
+            candidate.score += depth_score
+            candidate.reason = f"{candidate.reason}；{depth_reason}"
+
+        bad_score, bad_reason = _terminal_bad_hint_score(candidate.folder)
+        if bad_score:
+            candidate.score += bad_score
+            candidate.reason = f"{candidate.reason}；{bad_reason}"
+
+        if not has_game_keyword and candidate.score > NO_GAME_KEYWORD_SCORE_CAP:
+            candidate.score = NO_GAME_KEYWORD_SCORE_CAP
+            candidate.reason = f"{candidate.reason}；未命中游戏关键词，参考候选分数封顶"
+
+    candidates.sort(key=lambda item: (bool(item.matched_keywords), item.score, item.exists), reverse=True)
+    return candidates
 
 
 def _fixed_drive_roots() -> list[Path]:
@@ -544,11 +690,8 @@ def _build_game_root_candidates(emulator_path: str, game_keywords: set[str]) -> 
                 continue
             if not _path_has_save_hint(folder):
                 continue
-            score = 135
+            score = 80
             reason = "游戏根目录附近发现存档特征目录"
-            if _path_matches_keywords(folder, game_keywords):
-                score += 45
-                reason += "，且路径包含游戏相关关键词"
             _add_candidate(candidates, folder, score, "游戏目录搜索", reason)
     return list(candidates.values())
 
@@ -566,11 +709,8 @@ def _build_global_keyword_candidates(context: dict[str, str], game_keywords: set
                 break
             if not _path_matches_keywords(folder, game_keywords):
                 continue
-            score = 125
+            score = 50
             reason = "常见位置下发现路径包含游戏相关关键词"
-            if _path_has_save_hint(folder):
-                score += 35
-                reason += "，且目录名像存档目录"
             _add_candidate(candidates, folder, score, "全局常见位置搜索", reason)
             if len(candidates) >= 80:
                 return list(candidates.values())
@@ -630,9 +770,7 @@ def build_reference_candidates(
         if previous is None or candidate.score > previous.score:
             candidates[key] = candidate
 
-    result = list(candidates.values())
-    apply_game_keyword_boost(result, game_keywords, boost=70)
-    result.sort(key=lambda item: (item.score, item.exists), reverse=True)
+    result = _apply_reference_scoring(list(candidates.values()), context, emulator_path, game_keywords)
     return result
 
 
@@ -694,34 +832,77 @@ def diff_snapshots(before: dict[str, FileState], after: dict[str, FileState]) ->
     return changes
 
 
-def build_change_candidates(changes: list[ChangedFile], game_keywords: set[str] | None = None) -> list[SaveDirCandidate]:
+def build_change_candidates(
+    changes: list[ChangedFile],
+    game_keywords: set[str] | None = None,
+    scan_roots: list[Path] | None = None,
+) -> list[SaveDirCandidate]:
     grouped: dict[Path, list[ChangedFile]] = {}
     for change in changes:
         grouped.setdefault(change.path.parent, []).append(change)
 
     candidates: list[SaveDirCandidate] = []
+    game_keywords = game_keywords or set()
     for folder, files in grouped.items():
-        folder_text = str(folder).casefold()
         file_names = [item.path.name.casefold() for item in files]
         extensions = {item.path.suffix.casefold() for item in files}
+        matched_keywords = _matched_game_keywords(folder, game_keywords)
+        has_game_keyword = bool(matched_keywords)
         score = 100
         reasons: list[str] = ["检测到运行后文件变化"]
 
         if extensions & SAVE_EXTENSIONS:
             score += 40
-            reasons.append("包含常见存档扩展名")
-        if any(hint in folder_text for hint in GOOD_NAME_HINTS):
-            score += 30
-            reasons.append("目录名像存档目录")
-        if any(hint in folder_text for hint in BAD_NAME_HINTS):
-            score -= 60
-            reasons.append("目录名像缓存或日志目录")
+            reasons.append("包含强存档扩展名")
+
+        terminal_score, terminal_reason = _terminal_save_hint_score(folder, has_game_keyword)
+        if terminal_score:
+            score += terminal_score
+            reasons.append(terminal_reason)
+
+        strong_terminal_hint = terminal_score >= 25
+        if extensions & WEAK_SAVE_EXTENSIONS and (has_game_keyword or strong_terminal_hint):
+            score += 15
+            reasons.append("包含弱存档扩展名，且有游戏关键词或存档目录特征")
+
+        bad_score, bad_reason = _terminal_bad_hint_score(folder)
+        if bad_score:
+            score += bad_score
+            reasons.append(bad_reason)
+
+        if scan_roots:
+            depths: list[int] = []
+            for root in scan_roots:
+                try:
+                    depths.append(len(folder.resolve().relative_to(root.resolve()).parts))
+                except (OSError, ValueError):
+                    continue
+            if depths:
+                depth = min(depths)
+                if depth > 8:
+                    score -= 20
+                    reasons.append("相对扫描根目录层级过深")
+                elif depth > 6:
+                    score -= 10
+                    reasons.append("相对扫描根目录层级略深")
+
         if len(files) <= 20:
             score += 15
             reasons.append("修改文件数量合理")
+        elif len(files) <= 100:
+            score += 5
+            reasons.append("修改文件数量中等")
         else:
-            score -= 15
+            score -= 10
             reasons.append("修改文件较多，可能不是单纯存档")
+
+        new_file_count = sum(1 for item in files if item.old_state is None)
+        if new_file_count > len(files) / 2 and strong_terminal_hint:
+            score += 10
+            reasons.append("新增文件较多，且目录名像存档目录")
+        if any("save" in name or "profile" in name or "slot" in name for name in file_names):
+            score += 15
+            reasons.append("文件名包含存档相关词")
         if any("config" in name or "setting" in name for name in file_names):
             score -= 8
             reasons.append("包含配置类文件")
@@ -737,7 +918,7 @@ def build_change_candidates(changes: list[ChangedFile], game_keywords: set[str] 
             )
         )
 
-    apply_game_keyword_boost(candidates, game_keywords or set(), boost=45)
+    apply_game_keyword_boost(candidates, game_keywords or set(), boost=80)
     candidates.sort(key=lambda item: item.score, reverse=True)
     return candidates
 
