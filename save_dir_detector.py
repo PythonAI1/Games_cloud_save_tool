@@ -382,6 +382,10 @@ def _normalized_terminal_name(path: Path) -> str:
     return re.sub(r"[\s_\-]+", "", path.name.casefold())
 
 
+def _normalized_match_text(value: str) -> str:
+    return re.sub(r"[^0-9a-z\u4e00-\u9fff]+", "", value.casefold())
+
+
 def _terminal_save_hint_score(path: Path, has_game_keyword: bool) -> tuple[int, str]:
     name = _normalized_terminal_name(path)
     for label, score, hints in TERMINAL_SAVE_HINT_SCORES:
@@ -465,7 +469,11 @@ def _matched_game_keywords(path: Path, game_keywords: set[str]) -> list[str]:
     if not game_keywords:
         return []
     path_text = str(path).casefold()
-    return sorted(keyword for keyword in game_keywords if keyword in path_text)
+    compact_path_text = _normalized_match_text(path_text)
+    return sorted(
+        keyword for keyword in game_keywords
+        if keyword in path_text or _normalized_match_text(keyword) in compact_path_text
+    )
 
 
 def _is_generic_game_keyword(token: str) -> bool:
@@ -474,7 +482,7 @@ def _is_generic_game_keyword(token: str) -> bool:
     return any(fragment in token for fragment in GENERIC_GAME_KEYWORD_FRAGMENTS)
 
 
-def _split_keywords(value: str) -> set[str]:
+def _split_keywords(value: str, prefer_compact: bool = False) -> set[str]:
     keywords: set[str] = set()
     tokens = re.findall(r"[0-9A-Za-z\u4e00-\u9fff]+", value.casefold())
     filtered_tokens: list[str] = []
@@ -492,6 +500,8 @@ def _split_keywords(value: str) -> set[str]:
 
     compact = "".join(filtered_tokens)
     if len(compact) >= 4 and any(char.isalpha() for char in compact):
+        if prefer_compact:
+            return {compact}
         keywords.add(compact)
     return keywords
 
@@ -511,15 +521,16 @@ def _nearest_useful_parent_name(path: Path, max_levels: int = 4) -> str:
 
 def build_game_keywords(game_name: str, emulator_path: str, game_root: str, target_title: str = "") -> set[str]:
     keywords: set[str] = set()
+    keywords.update(_split_keywords(game_name, prefer_compact=True))
     if not emulator_path:
         return keywords
 
     path = Path(emulator_path)
     if path.suffix:
-        keywords.update(_split_keywords(path.stem))
+        keywords.update(_split_keywords(path.stem, prefer_compact=True))
     parent_name = _nearest_useful_parent_name(path)
     if parent_name:
-        keywords.update(_split_keywords(parent_name))
+        keywords.update(_split_keywords(parent_name, prefer_compact=True))
 
     return keywords
 
@@ -557,7 +568,11 @@ def _path_matches_keywords(path: Path, game_keywords: set[str]) -> bool:
     if not game_keywords:
         return False
     path_text = str(path).casefold()
-    return any(keyword in path_text for keyword in game_keywords)
+    compact_path_text = _normalized_match_text(path_text)
+    return any(
+        keyword in path_text or _normalized_match_text(keyword) in compact_path_text
+        for keyword in game_keywords
+    )
 
 
 def _add_candidate(

@@ -28,6 +28,7 @@ from PyQt5.QtWidgets import (
     QMessageBox,
     QPlainTextEdit,
     QProgressBar,
+    QProgressDialog,
     QPushButton,
     QSizePolicy,
     QSplitter,
@@ -195,6 +196,8 @@ class SaveDirectoryDetectDialog(QDialog):
         self.setMinimumHeight(520)
         self.game = game
         self.before_snapshot: dict | None = None
+        self.reference_candidates: list[SaveDirCandidate] = []
+        self.current_candidates: list[SaveDirCandidate] = []
         target_window = game.get("target_window") if isinstance(game.get("target_window"), dict) else {}
         self.game_keywords = build_game_keywords(
             str(game.get("name", "")),
@@ -202,12 +205,7 @@ class SaveDirectoryDetectDialog(QDialog):
             str(game.get("game_root_path", "")),
             str(target_window.get("title_keyword", "")),
         )
-        self.reference_candidates = build_reference_candidates(
-            str(game.get("game_root_path", "")),
-            str(game.get("emulator_path", "")),
-            str(game.get("name", "")),
-            str(target_window.get("title_keyword", "")),
-        )
+        self.match_keywords = sorted(self.game_keywords)
         self.selected_directory = ""
 
         layout = QVBoxLayout(self)
@@ -228,6 +226,31 @@ class SaveDirectoryDetectDialog(QDialog):
             " border-radius: 8px; padding: 8px 10px; font-weight: 700;"
         )
         layout.addWidget(warning_label)
+
+        keyword_card = QWidget()
+        keyword_layout = QVBoxLayout(keyword_card)
+        keyword_layout.setContentsMargins(0, 0, 0, 0)
+        keyword_layout.setSpacing(6)
+        keyword_label = QLabel("游戏名匹配关键词（列表非空时，候选目录必须包含其中任意一个关键词）")
+        keyword_label.setWordWrap(True)
+        keyword_layout.addWidget(keyword_label)
+
+        self.keyword_list = QListWidget()
+        self.keyword_list.setFixedHeight(72)
+        keyword_layout.addWidget(self.keyword_list)
+
+        keyword_button_row = QHBoxLayout()
+        self.keyword_edit = QLineEdit()
+        self.keyword_edit.setPlaceholderText("输入要匹配的游戏关键词")
+        self.add_keyword_button = QPushButton("新增关键词")
+        self.delete_keyword_button = QPushButton("删除选中关键词")
+        self.clear_keyword_button = QPushButton("清空关键词")
+        keyword_button_row.addWidget(self.keyword_edit, 1)
+        keyword_button_row.addWidget(self.add_keyword_button)
+        keyword_button_row.addWidget(self.delete_keyword_button)
+        keyword_button_row.addWidget(self.clear_keyword_button)
+        keyword_layout.addLayout(keyword_button_row)
+        layout.addWidget(keyword_card)
 
         self.candidate_list = QListWidget()
         self.candidate_list.setObjectName("SaveDirectoryCandidateList")
@@ -257,14 +280,96 @@ class SaveDirectoryDetectDialog(QDialog):
         self.open_button.clicked.connect(self.open_selected_directory)
         self.use_button.clicked.connect(self.use_selected_directory)
         self.cancel_button.clicked.connect(self.reject)
+        self.add_keyword_button.clicked.connect(self.add_match_keyword)
+        self.delete_keyword_button.clicked.connect(self.delete_selected_match_keyword)
+        self.clear_keyword_button.clicked.connect(self.clear_match_keywords)
+        self.keyword_edit.returnPressed.connect(self.add_match_keyword)
 
-        self.show_candidates(self.reference_candidates)
+        self._refresh_keyword_list()
+
+    def set_reference_candidates(self, candidates: list[SaveDirCandidate]) -> None:
+        self.reference_candidates = candidates
+        self.refresh_candidates(candidates, "正在刷新候选项...")
+
+    def _normalized_match_keywords(self) -> list[str]:
+        normalized: list[str] = []
+        seen: set[str] = set()
+        for keyword in self.match_keywords:
+            value = keyword.strip().casefold()
+            if not value or value in seen:
+                continue
+            normalized.append(value)
+            seen.add(value)
+        return normalized
+
+    def _refresh_keyword_list(self) -> None:
+        self.keyword_list.clear()
+        for keyword in self._normalized_match_keywords():
+            self.keyword_list.addItem(keyword)
+
+    def _candidate_matches_keywords(self, candidate: SaveDirCandidate) -> bool:
+        keywords = self._normalized_match_keywords()
+        if not keywords:
+            return True
+        path_text = str(candidate.folder).casefold()
+        compact_path_text = re.sub(r"[^0-9a-z\u4e00-\u9fff]+", "", path_text)
+        return any(
+            keyword in path_text or re.sub(r"[^0-9a-z\u4e00-\u9fff]+", "", keyword) in compact_path_text
+            for keyword in keywords
+        )
+
+    def refresh_candidates(self, candidates: list[SaveDirCandidate] | None = None, loading_text: str = "正在刷新候选项...") -> None:
+        if candidates is not None:
+            self.current_candidates = candidates
+        previous_tip = self.tip_label.text()
+        self.tip_label.setText(loading_text)
+        QApplication.setOverrideCursor(Qt.WaitCursor)
+        QApplication.processEvents()
+        try:
+            self.show_candidates(self.current_candidates)
+        finally:
+            QApplication.restoreOverrideCursor()
+        if self.tip_label.text() == loading_text:
+            self.tip_label.setText(previous_tip)
+
+    def add_match_keyword(self) -> None:
+        keyword = self.keyword_edit.text().strip().casefold()
+        if not keyword:
+            return
+        if keyword not in self._normalized_match_keywords():
+            self.match_keywords.append(keyword)
+            self._refresh_keyword_list()
+            self.refresh_candidates(loading_text="正在刷新候选项...")
+        self.keyword_edit.clear()
+
+    def delete_selected_match_keyword(self) -> None:
+        current = self.keyword_list.currentItem()
+        if current is None:
+            return
+        keyword = current.text().strip().casefold()
+        self.match_keywords = [item for item in self._normalized_match_keywords() if item != keyword]
+        self._refresh_keyword_list()
+        self.refresh_candidates(loading_text="正在刷新候选项...")
+
+    def clear_match_keywords(self) -> None:
+        if not self.match_keywords:
+            return
+        self.match_keywords = []
+        self._refresh_keyword_list()
+        self.refresh_candidates(loading_text="正在刷新候选项...")
 
     def show_candidates(self, candidates: list[SaveDirCandidate]) -> None:
         self.candidate_list.clear()
-        visible_candidates = [candidate for candidate in candidates if candidate.exists]
+        visible_candidates = [
+            candidate for candidate in candidates
+            if candidate.exists and self._candidate_matches_keywords(candidate)
+        ]
         if not visible_candidates:
-            item = QListWidgetItem("未找到可参考的候选目录。可以点击“启动游戏并检测变化文件”或“手动浏览”。")
+            if self._normalized_match_keywords():
+                message = "未找到包含当前关键词的候选目录。可以删除/清空关键词、启动检测或手动浏览。"
+            else:
+                message = "未找到可参考的候选目录。可以点击“启动游戏并检测变化文件”或“手动浏览”。"
+            item = QListWidgetItem(message)
             item.setData(Qt.UserRole, "")
             self.candidate_list.addItem(item)
             self.use_button.setEnabled(False)
@@ -357,7 +462,7 @@ class SaveDirectoryDetectDialog(QDialog):
         finally:
             QApplication.restoreOverrideCursor()
 
-        self.show_candidates(merged)
+        self.refresh_candidates(merged, "正在刷新候选项...")
         if change_candidates:
             self.tip_label.setText(
                 "已分析变化文件，实际发生变化且最像存档目录的候选项已排在前面。\n"
@@ -1546,7 +1651,29 @@ class GamesCloudSaveApp(QMainWindow):
         if not emulator_path or not Path(emulator_path).is_file():
             self._show_warning("无法检测", "请先填写正确的“模拟器/游戏路径”，再检测存档目录。")
             return
-        dialog = SaveDirectoryDetectDialog(self, self._current_game())
+        current_game = self._current_game()
+        target_window = current_game.get("target_window") if isinstance(current_game.get("target_window"), dict) else {}
+        progress = QProgressDialog("正在检测存档目录...", None, 0, 0, self)
+        progress.setWindowTitle("请稍候")
+        progress.setCancelButton(None)
+        progress.setWindowModality(Qt.ApplicationModal)
+        progress.setMinimumDuration(0)
+        progress.show()
+        QApplication.setOverrideCursor(Qt.WaitCursor)
+        QApplication.processEvents()
+        try:
+            reference_candidates = build_reference_candidates(
+                str(current_game.get("game_root_path", "")),
+                str(current_game.get("emulator_path", "")),
+                str(current_game.get("name", "")),
+                str(target_window.get("title_keyword", "")),
+            )
+        finally:
+            QApplication.restoreOverrideCursor()
+            progress.close()
+
+        dialog = SaveDirectoryDetectDialog(self, current_game)
+        dialog.set_reference_candidates(reference_candidates)
         if dialog.exec_() != QDialog.Accepted:
             return
         selected = dialog.selected_save_dir()
