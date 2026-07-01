@@ -44,10 +44,12 @@ from providers import normalized_repo_name, provider_display_name, provider_type
 from save_dir_detector import (
     SaveDirCandidate,
     build_change_candidates,
+    build_deep_scan_candidates,
     build_game_keywords,
     build_reference_candidates,
     collect_scan_roots,
     diff_snapshots,
+    fixed_drive_roots,
     merge_candidates,
     take_snapshot,
 )
@@ -261,6 +263,8 @@ class SaveDirectoryDetectDialog(QDialog):
         button_row.addStretch(1)
         self.detect_button = QPushButton("启动游戏并检测变化文件")
         self.analyze_button = QPushButton("分析变化文件")
+        self.scan_location_button = QPushButton("选择位置扫描")
+        self.scan_all_button = QPushButton("全盘扫描")
         self.browse_button = QPushButton("手动浏览")
         self.open_button = QPushButton("打开选中目录")
         self.use_button = QPushButton("使用选中目录")
@@ -268,6 +272,8 @@ class SaveDirectoryDetectDialog(QDialog):
         self.analyze_button.setEnabled(False)
         button_row.addWidget(self.detect_button)
         button_row.addWidget(self.analyze_button)
+        button_row.addWidget(self.scan_location_button)
+        button_row.addWidget(self.scan_all_button)
         button_row.addWidget(self.browse_button)
         button_row.addWidget(self.open_button)
         button_row.addWidget(self.use_button)
@@ -276,6 +282,8 @@ class SaveDirectoryDetectDialog(QDialog):
 
         self.detect_button.clicked.connect(self.start_game_change_detection)
         self.analyze_button.clicked.connect(self.analyze_file_changes)
+        self.scan_location_button.clicked.connect(self.scan_selected_location)
+        self.scan_all_button.clicked.connect(self.scan_all_drives)
         self.browse_button.clicked.connect(self.browse_directory)
         self.open_button.clicked.connect(self.open_selected_directory)
         self.use_button.clicked.connect(self.use_selected_directory)
@@ -473,6 +481,61 @@ class SaveDirectoryDetectDialog(QDialog):
                 "没有检测到明显文件变化。可以重新检测，或使用规则参考/手动浏览。\n"
                 "预测存档位置仅供参考，请确认存档位置正确后再使用。"
             )
+
+    def scan_selected_location(self) -> None:
+        selected = QFileDialog.getExistingDirectory(self, "选择要扫描的磁盘或目录", str(Path.home()))
+        if not selected:
+            return
+        self._scan_save_candidates([Path(selected)], "选择位置扫描")
+
+    def scan_all_drives(self) -> None:
+        result = QMessageBox.question(
+            self,
+            "确认全盘扫描",
+            "全盘扫描可能需要较长时间，并可能让界面短暂卡顿。\n是否继续扫描所有固定磁盘？",
+        )
+        if result != QMessageBox.Yes:
+            return
+        self._scan_save_candidates(fixed_drive_roots(), "全盘扫描")
+
+    def _scan_save_candidates(self, roots: list[Path], title: str) -> None:
+        keywords = set(self._normalized_match_keywords())
+        if not keywords:
+            QMessageBox.warning(self, "缺少关键词", "请先添加至少一个游戏名匹配关键词，再进行磁盘扫描。")
+            return
+        if not roots:
+            QMessageBox.warning(self, "无法扫描", "没有找到可扫描的位置。")
+            return
+
+        progress = QProgressDialog("正在扫描候选目录...", "取消", 0, 0, self)
+        progress.setWindowTitle(title)
+        progress.setWindowModality(Qt.ApplicationModal)
+        progress.setMinimumDuration(0)
+        progress.show()
+        QApplication.setOverrideCursor(Qt.WaitCursor)
+        QApplication.processEvents()
+
+        def update_progress(scanned: int, current_path: str) -> bool:
+            progress.setLabelText(f"已扫描目录：{scanned}\n当前：{current_path}")
+            QApplication.processEvents()
+            return not progress.wasCanceled()
+
+        try:
+            scan_candidates = build_deep_scan_candidates(roots, keywords, update_progress)
+        finally:
+            QApplication.restoreOverrideCursor()
+            progress.close()
+
+        if not scan_candidates:
+            QMessageBox.information(self, "未找到", "没有在所选位置找到匹配关键词和存档特征的候选目录。")
+            return
+
+        merged = merge_candidates(scan_candidates, self.current_candidates)
+        self.refresh_candidates(merged, "正在刷新候选项...")
+        self.tip_label.setText(
+            "已完成磁盘扫描，并把匹配游戏关键词且包含存档特征的候选项加入列表。\n"
+            "预测存档位置仅供参考，请确认存档位置正确后再使用。"
+        )
 
     def browse_directory(self) -> None:
         selected = QFileDialog.getExistingDirectory(self, "选择存档文件夹", str(Path.home()))

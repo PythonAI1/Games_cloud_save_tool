@@ -24,6 +24,15 @@ WEAK_SAVE_EXTENSIONS = {
     ".db",
 }
 
+SAVE_FEATURE_FILE_NAMES = {
+    "user.dat",
+    "account.dat",
+    "game_data",
+    "gamedata",
+    "progress",
+    "checkpoint",
+}
+
 GOOD_NAME_HINTS = {
     "save",
     "saves",
@@ -52,6 +61,8 @@ BAD_NAME_HINTS = {
     "video",
     "videos",
     "backup",
+    "assetcache",
+    "persistentdownloaddir",
 }
 
 SKIP_DIR_NAMES = BAD_NAME_HINTS | {
@@ -191,6 +202,7 @@ TERMINAL_SAVE_HINT_SCORES = (
     ("save/saves/savedata", 60, {"save", "saves", "savedata", "savegame", "savegames", "gamesaves"}),
     ("profile/profiles", 45, {"profile", "profiles", "playerprofile", "playerprofiles"}),
     ("userdata/user_data", 25, {"userdata", "user_data"}),
+    ("steam_settings", 25, {"steam_settings", "steamsettings"}),
     ("remote", 15, {"remote"}),
     ("slot/slots", 15, {"slot", "slots"}),
     ("checkpoint/checkpoints", 12, {"checkpoint", "checkpoints"}),
@@ -409,6 +421,52 @@ def _terminal_bad_hint_score(path: Path) -> tuple[int, str]:
     return 0, ""
 
 
+def _looks_like_id_directory(path: Path) -> bool:
+    name = path.name.casefold()
+    if name.isdigit() and len(name) >= 4:
+        return True
+    return bool(re.fullmatch(r"[0-9a-f]{8,}", name))
+
+
+def _file_has_save_feature(path: Path) -> bool:
+    name = path.name.casefold()
+    stem = path.stem.casefold()
+    if path.suffix.casefold() in SAVE_EXTENSIONS:
+        return True
+    if name in SAVE_FEATURE_FILE_NAMES or stem in SAVE_FEATURE_FILE_NAMES:
+        return True
+    return any(token in name for token in ("savedata", "game_data", "gamedata", "progress", "checkpoint"))
+
+
+def _direct_save_file_count(folder: Path, max_files: int = 200) -> int:
+    count = 0
+    scanned = 0
+    try:
+        for item in folder.iterdir():
+            if not item.is_file():
+                continue
+            scanned += 1
+            if _file_has_save_feature(item):
+                count += 1
+            if scanned >= max_files:
+                break
+    except OSError:
+        return 0
+    return count
+
+
+def _child_id_dirs_with_save_files(folder: Path) -> list[Path]:
+    result: list[Path] = []
+    try:
+        children = [item for item in folder.iterdir() if item.is_dir() and _looks_like_id_directory(item)]
+    except OSError:
+        return result
+    for child in children:
+        if _direct_save_file_count(child) > 0:
+            result.append(child)
+    return result
+
+
 def _is_relative_to(path: Path, parent: Path) -> bool:
     try:
         path.resolve().relative_to(parent.resolve())
@@ -521,7 +579,6 @@ def _nearest_useful_parent_name(path: Path, max_levels: int = 4) -> str:
 
 def build_game_keywords(game_name: str, emulator_path: str, game_root: str, target_title: str = "") -> set[str]:
     keywords: set[str] = set()
-    keywords.update(_split_keywords(game_name, prefer_compact=True))
     if not emulator_path:
         return keywords
 
@@ -597,6 +654,58 @@ def _add_candidate(
         candidates[key] = candidate
 
 
+def _add_keyword_tree_save_candidates(
+    candidates: dict[str, SaveDirCandidate],
+    keyword_root: Path,
+    source: str,
+    base_score: int,
+    max_depth: int = 6,
+    max_dirs: int = 2000,
+) -> int:
+    added = 0
+    for folder in _walk_candidate_dirs(keyword_root, max_depth=max_depth, max_dirs=max_dirs):
+        if _terminal_bad_hint_score(folder)[0] < 0:
+            continue
+
+        save_hint_score = _terminal_save_hint_score(folder, has_game_keyword=True)[0]
+        direct_save_files = _direct_save_file_count(folder)
+        child_save_id_dirs = _child_id_dirs_with_save_files(folder)
+
+        if len(child_save_id_dirs) >= 2:
+            reason = "多个同级 ID 子目录包含存档特征文件，推荐父目录避免遗漏账号或槽位"
+            _add_candidate(candidates, folder, base_score + 125, source, reason)
+            added += 1
+            continue
+
+        if len(child_save_id_dirs) == 1 and save_hint_score > 0:
+            child = child_save_id_dirs[0]
+            reason = "唯一 ID 子目录包含存档特征文件，推荐实际存档目录"
+            _add_candidate(candidates, child, base_score + 130, source, reason)
+            added += 1
+            continue
+
+        if direct_save_files > 0:
+            if _looks_like_id_directory(folder):
+                reason = "ID 目录中直接包含存档特征文件"
+                score = base_score + 125
+            elif save_hint_score > 0:
+                reason = "存档特征目录中直接包含存档特征文件"
+                score = base_score + 90
+            else:
+                reason = "目录中直接包含存档特征文件"
+                score = base_score + 60
+            _add_candidate(candidates, folder, score, source, reason)
+            added += 1
+            continue
+
+        if save_hint_score > 0:
+            reason = "游戏关键词目录下发现存档特征子目录"
+            _add_candidate(candidates, folder, base_score + 55, source, reason)
+            added += 1
+
+    return added
+
+
 def _apply_reference_scoring(
     candidates: list[SaveDirCandidate],
     context: dict[str, str],
@@ -644,6 +753,10 @@ def _fixed_drive_roots() -> list[Path]:
         if root.exists() and root.is_dir():
             roots.append(root)
     return roots
+
+
+def fixed_drive_roots() -> list[Path]:
+    return _fixed_drive_roots()
 
 
 def _global_common_search_roots(context: dict[str, str]) -> list[Path]:
@@ -699,15 +812,11 @@ def _game_install_roots(emulator_path: str) -> list[Path]:
 
 def _build_game_root_candidates(emulator_path: str, game_keywords: set[str]) -> list[SaveDirCandidate]:
     candidates: dict[str, SaveDirCandidate] = {}
-    for root in _game_install_roots(emulator_path):
-        for folder in _walk_candidate_dirs(root, max_depth=4, max_dirs=1200):
-            if folder == root:
-                continue
-            if not _path_has_save_hint(folder):
-                continue
-            score = 80
-            reason = "游戏根目录附近发现存档特征目录"
-            _add_candidate(candidates, folder, score, "游戏目录搜索", reason)
+    install_roots = _game_install_roots(emulator_path)
+    keyword_roots = [root for root in install_roots if _path_matches_keywords(root, game_keywords)]
+    roots = keyword_roots or install_roots[:1]
+    for root in roots:
+        _add_keyword_tree_save_candidates(candidates, root, "游戏目录搜索", 80, max_depth=6, max_dirs=1800)
     return list(candidates.values())
 
 
@@ -718,20 +827,77 @@ def _build_global_keyword_candidates(context: dict[str, str], game_keywords: set
     candidates: dict[str, SaveDirCandidate] = {}
     scanned_dirs = 0
     for root in _global_common_search_roots(context):
+        for folder in _walk_candidate_dirs(root, max_depth=2, max_dirs=6000):
+            if folder == root or not _path_matches_keywords(folder, game_keywords):
+                continue
+            _add_keyword_tree_save_candidates(candidates, folder, "全局常见位置搜索", 65, max_depth=7, max_dirs=1800)
+            if len(candidates) >= 80:
+                return list(candidates.values())
+
         for folder in _walk_candidate_dirs(root, max_depth=5, max_dirs=1000):
             scanned_dirs += 1
             if scanned_dirs > 12000:
                 break
             if not _path_matches_keywords(folder, game_keywords):
                 continue
-            score = 50
-            reason = "常见位置下发现路径包含游戏相关关键词"
-            _add_candidate(candidates, folder, score, "全局常见位置搜索", reason)
+            _add_keyword_tree_save_candidates(candidates, folder, "全局常见位置搜索", 50, max_depth=6, max_dirs=1200)
             if len(candidates) >= 80:
                 return list(candidates.values())
         if scanned_dirs > 12000:
             break
     return list(candidates.values())
+
+
+def build_deep_scan_candidates(
+    roots: list[Path],
+    game_keywords: set[str],
+    progress_callback=None,
+    max_dirs_per_root: int = 30000,
+    max_keyword_roots: int = 120,
+) -> list[SaveDirCandidate]:
+    if not game_keywords:
+        return []
+
+    candidates: dict[str, SaveDirCandidate] = {}
+    scanned_dirs = 0
+    keyword_roots = 0
+    for root in roots:
+        if not root.exists() or not root.is_dir():
+            continue
+        root_depth = len(root.parts)
+        dirs_in_root = 0
+        for current_root, dir_names, _file_names in os.walk(root):
+            current = Path(current_root)
+            dirs_in_root += 1
+            scanned_dirs += 1
+            if len(current.parts) - root_depth >= 10:
+                dir_names[:] = []
+            dir_names[:] = [
+                name for name in dir_names
+                if name.casefold() not in SKIP_DIR_NAMES
+            ]
+
+            if progress_callback and scanned_dirs % 100 == 0:
+                if progress_callback(scanned_dirs, str(current)) is False:
+                    return _apply_reference_scoring(list(candidates.values()), {}, "", game_keywords)
+
+            if _path_matches_keywords(current, game_keywords):
+                keyword_roots += 1
+                _add_keyword_tree_save_candidates(
+                    candidates,
+                    current,
+                    "磁盘扫描",
+                    60,
+                    max_depth=7,
+                    max_dirs=1800,
+                )
+                if len(candidates) >= 120 or keyword_roots >= max_keyword_roots:
+                    return _apply_reference_scoring(list(candidates.values()), {}, "", game_keywords)
+
+            if dirs_in_root >= max_dirs_per_root:
+                break
+
+    return _apply_reference_scoring(list(candidates.values()), {}, "", game_keywords)
 
 
 def build_reference_candidates(
